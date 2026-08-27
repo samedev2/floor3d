@@ -1,0 +1,8 @@
+{
+  "appId": "com.floorvision.ar",
+  "appName": "FloorVision AR",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

@@ -1,0 +1,14 @@
+// Variables for Android Gradle Plugin
+ext {
+    compileSdkVersion = 33
+    minSdkVersion = 22
+    targetSdkVersion = 33
+    androidxAppCompatVersion = '1.6.1'
+    androidxCoreSplashScreenVersion = '1.0.0'
+    androidxCoordinatorLayoutVersion = '1.2.0'
+    coreSplashScreenVersion = '1.0.0'
+    junitVersion = '4.13.2'
+    androidxJunitVersion = '1.1.5'
+    androidxEspressoCoreVersion = '3.5.1'
+    cordovaAndroidVersion = '10.1.1'
+}

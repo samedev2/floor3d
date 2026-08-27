@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">FloorVision AR</string>
+    <string name="title_activity_main">FloorVision AR</string>
+    <string name="package_name">com.floorvision.ar</string>
+    <string name="custom_url_scheme">com.floorvision.ar</string>
+</resources>
