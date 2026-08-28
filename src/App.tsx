@@ -26,6 +26,7 @@ import { GeminiChatPanel } from './components/GeminiChatPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { AuthScreen } from './components/AuthScreen';
 import { MaterialEstimate } from './components/MaterialEstimate';
+import { LoginGate } from './components/LoginGate';
 import { useStore } from './store';
 import { geminiChat, hasApiKey, type GeminiFloorPlan } from './lib/geminiChat';
 import { usePlantImport } from './lib/usePlantImport';
@@ -105,6 +106,7 @@ const MODE_CARDS: ModeCard[] = [
 export default function App() {
   const [view, setView] = useState<ViewKey | null>(null);
   const [showPermissions, setShowPermissions] = useState(true);
+  const [authed, setAuthed] = useState<boolean | null>(null);
   const [aiEnabled, setAiEnabled] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
@@ -119,6 +121,9 @@ export default function App() {
   useEffect(() => {
     setAiEnabled(hasApiKey());
   }, [view]);
+
+  // GATE: LoginGate aparece enquanto authed === null
+  // Quando autentica, mostra o app (PermissionHandler → menu)
 
   // ============================================
   // HOOK UNIFICADO DE IMPORT
@@ -166,6 +171,12 @@ export default function App() {
 
   // Helper: pendingImage vem do lastResult do hook
   const pendingImage = lastResult?.imageDataUrl ?? null;
+
+  // Gate de autenticação — antes de TUDO
+  // Se não tiver user logado, mostra tela de login profissional
+  if (authed === false || authed === null) {
+    return <LoginGate onAuthenticated={() => setAuthed(true)} version="v2.1.0" />;
+  }
 
   if (showPermissions) {
     return (
