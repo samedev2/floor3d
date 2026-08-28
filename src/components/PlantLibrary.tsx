@@ -32,6 +32,7 @@ import {
   savePlant as savePlantCloud,
   getCurrentUser,
 } from '../lib/supabase';
+import { usePlantImport } from '../lib/usePlantImport';
 
 // ============================================
 // PLANT LIBRARY STORAGE
@@ -335,65 +336,60 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
   }, [library, cloudUser]);
 
   // ============================================
-  // UPLOAD - FILE
+  // UPLOAD - FILE (via hook unificado usePlantImport)
   // ============================================
+  const {
+    importFile: importFilePlant,
+    isImporting: isImportingPlant,
+    progress: plantProgress,
+    error: plantImportError,
+  } = usePlantImport({
+    onSuccess: (result, model3d) => {
+      // Cria planta a partir do resultado do import
+      const context: DimensionalContext = {
+        totalWidth: result.plan.widthMeters,
+        totalDepth: result.plan.heightMeters,
+        pixelsPerMeter: result.imageWidth / result.plan.widthMeters,
+        originX: result.imageWidth / 2,
+        originY: result.imageHeight / 2,
+      };
+      const newPlant: SavedPlant = {
+        id: `plant_${Date.now()}`,
+        name: (result.imageDataUrl?.length > 0 ? 'Planta' : `Planta ${library.length + 1}`),
+        type: 'auto-detected',
+        imageData: result.imageDataUrl,
+        objects: model3d.objects,
+        rooms: model3d.rooms,
+        context,
+        createdAt: new Date(),
+        lastModified: new Date(),
+        totalArea: result.stats.totalArea,
+        totalWalls: result.stats.wallCount,
+        totalRooms: result.stats.roomCount,
+      };
+      setLibrary(prev => [newPlant, ...prev]);
+      setCurrentPlant(newPlant);
+      setView('editor');
+    },
+    onError: (msg) => {
+      setError(msg);
+    },
+  });
+
+  // Sincroniza estado local com hook
+  useEffect(() => {
+    setIsProcessing(isImportingPlant);
+    if (plantProgress?.message) setProcessingStatus(plantProgress.message);
+    if (plantImportError) setError(plantImportError);
+  }, [isImportingPlant, plantProgress, plantImportError]);
+
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    setIsProcessing(true);
+    e.target.value = '';
     setError(null);
-    setProcessingStatus('Carregando arquivo...');
-
-    try {
-      const { convertFileToImage } = await import('../lib/pdfConverter');
-      const imageDataUrl = await convertFileToImage(file);
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const imgEl = document.createElement('img');
-        imgEl.onload = () => resolve(imgEl);
-        imgEl.onerror = () => reject(new Error('Falha ao carregar imagem'));
-        imgEl.src = imageDataUrl;
-      });
-
-      setProcessingStatus('Detectando estrutura...');
-      
-      const { floorPlanDetector } = await import('../floorplan/detector');
-      const result = await floorPlanDetector.detect(img, 'library-upload');
-      
-      if (result.success && result.floorPlan && result.floorPlan.walls.length > 0) {
-        setProcessingStatus('Gerando modelo 3D...');
-        
-        // Create plant from detection
-        const context = DimensionalEngine.buildContext(img.width, img.height);
-        const { objects, rooms } = await generateFromDetection(result.floorPlan, context);
-        
-        const newPlant: SavedPlant = {
-          id: `plant_${Date.now()}`,
-          name: file.name.replace(/\.[^/.]+$/, ''),
-          type: 'auto-detected',
-          imageData: imageDataUrl,
-          objects,
-          rooms,
-          context,
-          createdAt: new Date(),
-          lastModified: new Date(),
-          totalArea: result.floorPlan.dimensions.width * result.floorPlan.dimensions.height / 10000,
-          totalWalls: result.floorPlan.walls.length,
-          totalRooms: result.floorPlan.rooms?.length || 0,
-        };
-        
-        setLibrary(prev => [newPlant, ...prev]);
-        setCurrentPlant(newPlant);
-        setView('editor');
-      } else {
-        setError('Não foi possível detectar paredes. Tente outra imagem.');
-      }
-    } catch (err) {
-      setError('Erro: ' + (err instanceof Error ? err.message : 'Desconhecido'));
-    } finally {
-      setIsProcessing(false);
-    }
-  }, []);
+    await importFilePlant(file);
+  }, [importFilePlant]);
 
   // ============================================
   // UPLOAD - HAND DRAWN
@@ -1101,113 +1097,6 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
       </div>
     </div>
   );
-}
-
-// ============================================
-// HELPER: Generate objects from detection
-// ============================================
-async function generateFromDetection(
-  floorPlan: any,
-  context: DimensionalContext
-): Promise<{ objects: SemanticObject[]; rooms: RoomData[] }> {
-  const objects: SemanticObject[] = [];
-  const rooms: RoomData[] = [];
-
-  const wallHeight = 2.8;
-
-  // Convert walls
-  floorPlan.walls.forEach((wall: any, index: number) => {
-    const startWorld = {
-      x: (wall.start.x - context.originX) / context.pixelsPerMeter,
-      z: (wall.start.y - context.originY) / context.pixelsPerMeter,
-    };
-    const endWorld = {
-      x: (wall.end.x - context.originX) / context.pixelsPerMeter,
-      z: (wall.end.y - context.originY) / context.pixelsPerMeter,
-    };
-
-    const dx = endWorld.x - startWorld.x;
-    const dz = endWorld.z - startWorld.z;
-    const length = Math.sqrt(dx * dx + dz * dz);
-    const angle = Math.atan2(dz, dx);
-
-    objects.push({
-      id: `wall_${wall.id || index}`,
-      type: 'wall',
-      source_2d: wall.id || `line_${index}`,
-      position: [
-        (startWorld.x + endWorld.x) / 2,
-        wallHeight / 2,
-        (startWorld.z + endWorld.z) / 2,
-      ],
-      rotation: [0, -angle, 0],
-      dimensions: { length, thickness: 0.15, height: wallHeight },
-      confidence: 0.9,
-      editable: true,
-      layer: LAYERS.WALLS,
-      isExterior: wall.isExterior,
-    });
-  });
-
-  // Convert rooms
-  if (floorPlan.rooms && floorPlan.rooms.length > 0) {
-    floorPlan.rooms.forEach((room: any) => {
-      const polygonWorld = (room.polygon || []).map((p: any) => ({
-        x: (p.x - context.originX) / context.pixelsPerMeter,
-        z: (p.y - context.originY) / context.pixelsPerMeter,
-      }));
-      
-      rooms.push({
-        id: room.id,
-        name: room.name || 'Ambiente',
-        type: room.type || 'unknown',
-        walls: room.walls || [],
-        polygon: polygonWorld,
-        area: room.area || 0,
-        center: { x: 0, z: 0 },
-      });
-      
-      // Add floor and ceiling
-      if (polygonWorld.length > 0) {
-        const xs = polygonWorld.map((p: any) => p.x);
-        const zs = polygonWorld.map((p: any) => p.z);
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minZ = Math.min(...zs);
-        const maxZ = Math.max(...zs);
-
-        objects.push({
-          id: `floor_${room.id}`,
-          type: 'floor',
-          source_2d: room.id,
-          position: [(minX + maxX) / 2, 0.01, (minZ + maxZ) / 2],
-          rotation: [0, 0, 0],
-          dimensions: { length: maxX - minX, thickness: maxZ - minZ, height: 0.01 },
-          confidence: 0.9,
-          editable: true,
-          layer: LAYERS.FLOORS,
-          roomId: room.id,
-          name: room.name,
-        });
-
-        objects.push({
-          id: `ceiling_${room.id}`,
-          type: 'ceiling',
-          source_2d: room.id,
-          position: [(minX + maxX) / 2, wallHeight, (minZ + maxZ) / 2],
-          rotation: [0, 0, 0],
-          dimensions: { length: maxX - minX, thickness: maxZ - minZ, height: 0.01 },
-          confidence: 0.9,
-          editable: true,
-          layer: LAYERS.CEILINGS,
-          roomId: room.id,
-          name: room.name,
-        });
-      }
-    });
-  }
-
-  return { objects, rooms };
 }
 
 // ============================================
