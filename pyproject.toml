@@ -9,12 +9,14 @@ description = "Floor-plan structure extraction via computer vision"
 requires-python = ">=3.11"
 # Core deps: light, importable anywhere. No torch here — installing torch is
 # the user's choice (CPU vs CUDA build), pulled in by [train] or [serve].
+# SVG rasterization goes through pymupdf (self-contained wheel, no system
+# Cairo/GTK) so `pip install` works on Windows out of the box.
 dependencies = [
     "numpy>=1.26",
     "pillow>=10",
     "pyyaml>=6",
     "tqdm>=4.66",
-    "cairosvg>=2.7",
+    "pymupdf>=1.24",
     "safetensors>=0.4",
 ]
 
@@ -34,6 +36,8 @@ dev = [
     "matplotlib>=3.8",
 ]
 # Inference server for the 3D viewer. opencv-python-headless avoids pulling Qt.
+# On Windows, install the CPU torch wheel first:
+#   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 serve = [
     "torch>=2.2",
     "torchvision>=0.17",

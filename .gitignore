@@ -54,3 +54,6 @@ NOTES.local.md
 
 # Personal training infra — not for users
 runpod_setup.sh
+
+# Self-zip of the repo that shipped alongside it (redundant, ~7 MB)
+LICENSE.zip

@@ -1,0 +1,1273 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Floor3D — Planta → 3D</title>
+<style>
+  :root {
+    /* Viewer (3D scene) palette — unchanged from the original project, a
+       deliberate warm/paper look tuned for the model's lighting & shadows. */
+    --viewer-bg: #f4f1ec;
+    --viewer-ink: #1a1a1a;
+    --viewer-muted: rgba(26, 26, 26, 0.55);
+    --viewer-hairline: rgba(0, 0, 0, 0.08);
+
+    /* App shell palette — mirrors the reference dashboard screenshots. */
+    --app-bg: #0a0e1a;
+    --panel-bg: #0f1526;
+    --panel-border: rgba(255, 255, 255, 0.08);
+    --text: #e8ecf5;
+    --text-muted: rgba(232, 236, 245, 0.55);
+    --text-faint: rgba(232, 236, 245, 0.32);
+    --green: #34d399;
+    --green-bg: rgba(16, 185, 129, 0.10);
+    --green-border: rgba(52, 211, 153, 0.35);
+    --amber: #fbbf24;
+    --blue: #3b82f6;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--app-bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------------------
+     Screen shell — one visible "screen" at a time, dashboard-app style.
+  --------------------------------------------------------------------- */
+  .screen { display: none; height: 100%; }
+  .screen.active { display: block; }
+  .scroll-area {
+    height: calc(100% - 56px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 16px 32px;
+  }
+  @media (min-width: 720px) {
+    .scroll-area { padding: 24px 32px 48px; }
+  }
+
+  .topbar {
+    height: 56px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+  }
+  .topbar .back-btn {
+    width: 32px; height: 32px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; border: 1px solid var(--panel-border);
+    background: rgba(255,255,255,0.03); color: var(--text);
+    cursor: pointer;
+  }
+  .topbar .back-btn:hover { background: rgba(255,255,255,0.08); }
+  .topbar-titles { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+  .topbar-titles .t1 { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar-titles .t2 { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar-spacer { flex: 1; }
+  .topbar-icons { display: flex; align-items: center; gap: 10px; color: var(--text-muted); }
+  .icon-btn {
+    width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; cursor: pointer; border: none; background: transparent; color: inherit;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px; flex: none;
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: #fff;
+  }
+
+  .demo-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    padding: 4px 9px; border-radius: 999px;
+    background: rgba(251, 191, 36, 0.14); color: var(--amber);
+    white-space: nowrap;
+  }
+  .demo-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+
+  /* ---------------------------------------------------------------------
+     Status banner
+  --------------------------------------------------------------------- */
+  .status-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 16px;
+    background: var(--green-bg);
+    border: 1px solid var(--green-border);
+    border-radius: 12px;
+    margin-bottom: 18px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .status-banner .sb-icon { color: var(--green); flex: none; }
+  .status-banner b { font-weight: 700; }
+  .status-banner .sb-via { color: var(--text-muted); margin-left: auto; padding-left: 10px; white-space: nowrap; font-size: 12px; }
+
+  /* ---------------------------------------------------------------------
+     Import card
+  --------------------------------------------------------------------- */
+  .import-card {
+    display: flex; align-items: center; gap: 16px;
+    padding: 18px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(59,130,246,0.20), rgba(29,58,138,0.30));
+    border: 1px solid rgba(59,130,246,0.25);
+    margin-bottom: 22px;
+  }
+  .import-card .ic-icon {
+    width: 46px; height: 46px; border-radius: 12px; flex: none;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    display: flex; align-items: center; justify-content: center; color: #fff;
+  }
+  .import-card .ic-body { flex: 1; min-width: 0; }
+  .import-card h2 { margin: 0 0 3px; font-size: 15px; font-weight: 700; }
+  .import-card p { margin: 0 0 12px; font-size: 12.5px; color: var(--text-muted); line-height: 1.4; }
+  .pill-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 9px 15px; border-radius: 9px; border: none; cursor: pointer;
+    background: linear-gradient(135deg, #3b82f6, #2563eb); color: #fff;
+  }
+  .pill-btn:hover { filter: brightness(1.08); }
+  .pill-btn:active { transform: translateY(1px); }
+
+  /* ---------------------------------------------------------------------
+     Modes grid
+  --------------------------------------------------------------------- */
+  .section-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-faint);
+    margin: 0 0 10px;
+  }
+  .modes-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  @media (max-width: 460px) {
+    .modes-grid { grid-template-columns: 1fr; }
+  }
+  .mode-card {
+    position: relative;
+    padding: 16px; border-radius: 14px; border: 1px solid var(--panel-border);
+    cursor: pointer; text-align: left; font-family: inherit;
+    display: flex; flex-direction: column; gap: 26px;
+    min-height: 96px;
+    color: var(--text);
+  }
+  .mode-card:hover { filter: brightness(1.08); }
+  .mode-card:active { transform: translateY(1px); }
+  .mode-card .mc-icon { color: rgba(255,255,255,0.92); }
+  .mode-card .mc-corner { position: absolute; top: 14px; right: 14px; color: rgba(255,255,255,0.55); }
+  .mode-card .mc-title { font-size: 13.5px; font-weight: 700; }
+  .mode-card .mc-sub { font-size: 11px; color: rgba(255,255,255,0.62); margin-top: 2px; }
+  .mode-card.locked { cursor: default; opacity: 0.72; }
+  .mode-card.locked:hover { filter: none; }
+
+  .mc-chat      { background: linear-gradient(135deg, #2e1065, #1e1b3a); }
+  .mc-viewer360 { background: linear-gradient(135deg, #065f46, #06342a); }
+  .mc-materials { background: linear-gradient(135deg, #9a3412, #6c2410); }
+  .mc-blockout  { background: linear-gradient(135deg, #1e293b, #0f172a); }
+  .mc-library   { background: linear-gradient(135deg, #1e40af, #172a63); }
+  .mc-gaussian  { background: linear-gradient(135deg, #581c87, #33074f); }
+  .mc-hydraulic { background: linear-gradient(135deg, #075985, #0c4a6e); }
+
+  /* ---------------------------------------------------------------------
+     Library screen
+  --------------------------------------------------------------------- */
+  .lib-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 22px; }
+  .lib-action-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 18px 10px; border-radius: 14px; border: none; cursor: pointer;
+    font-family: inherit; color: #fff; font-size: 12.5px; font-weight: 700;
+  }
+  .lib-action-btn small { font-weight: 500; font-size: 10.5px; opacity: 0.75; }
+  .lib-action-btn.upload { background: linear-gradient(135deg, #0ea5e9, #0369a1); }
+  .lib-action-btn.manual { background: linear-gradient(135deg, #10b981, #047857); }
+
+  .folders-empty {
+    padding: 14px 16px; border-radius: 12px; border: 1px dashed var(--panel-border);
+    color: var(--text-faint); font-size: 12px; margin-bottom: 22px;
+  }
+  .folders-empty .fe-title { color: var(--text-muted); font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+
+  .plan-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px; border-radius: 14px; border: 1px solid var(--panel-border);
+    background: rgba(255,255,255,0.02);
+    margin-bottom: 10px;
+  }
+  .plan-card .pc-thumb {
+    width: 52px; height: 52px; border-radius: 10px; flex: none;
+    background: #fff; object-fit: cover; border: 1px solid var(--panel-border);
+  }
+  .plan-card .pc-body { flex: 1; min-width: 0; }
+  .plan-card .pc-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .plan-card .pc-title { font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .plan-card .pc-tag {
+    font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+    background: rgba(52,211,153,0.14); color: var(--green); white-space: nowrap;
+  }
+  .plan-card .pc-meta { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .plan-card .pc-open {
+    flex: none; font: inherit; font-size: 12px; font-weight: 700;
+    padding: 8px 13px; border-radius: 8px; border: none; cursor: pointer;
+    background: #3b82f6; color: #fff;
+  }
+  .plan-card .pc-open:hover { filter: brightness(1.1); }
+
+  /* ---------------------------------------------------------------------
+     Materials screen
+  --------------------------------------------------------------------- */
+  .mat-note {
+    font-size: 12px; line-height: 1.5; color: var(--text-muted);
+    padding: 12px 14px; border-radius: 12px; border: 1px solid var(--panel-border);
+    background: rgba(255,255,255,0.02); margin-bottom: 18px;
+  }
+  .mat-field { margin-bottom: 14px; }
+  .mat-field label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+  .mat-hint { font-size: 11px; color: var(--text-faint); line-height: 1.5; margin: -8px 0 16px; }
+  .mat-field input, .mat-field select {
+    width: 100%; font: inherit; font-size: 13.5px;
+    padding: 10px 12px; border-radius: 9px; border: 1px solid var(--panel-border);
+    background: rgba(255,255,255,0.03); color: var(--text);
+  }
+  .mat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mat-results {
+    margin-top: 18px; padding: 16px; border-radius: 14px;
+    background: linear-gradient(135deg, rgba(154,52,18,0.18), rgba(108,36,16,0.24));
+    border: 1px solid rgba(251,146,60,0.25);
+  }
+  .mat-results .mr-row { display: flex; justify-content: space-between; align-items: baseline; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .mat-results .mr-row:last-child { border-bottom: none; }
+  .mat-results .mr-label { font-size: 12.5px; color: var(--text-muted); }
+  .mat-results .mr-value { font-size: 15px; font-weight: 700; }
+  .mat-placeholder { color: var(--text-faint); font-size: 12.5px; text-align: center; padding: 6px 0; }
+
+  /* ---------------------------------------------------------------------
+     Viewer screen — reuses the original light "paper" theme for the 3D
+     scene itself; only the surrounding chrome (topbar, floating panel,
+     back button) follows the dark dashboard look.
+  --------------------------------------------------------------------- */
+  #screen-viewer.active { position: relative; }
+  canvas#scene { display: block; position: fixed; inset: 0; top: 56px; }
+  #screen-viewer .topbar { position: relative; z-index: 20; }
+
+  .viewer-panel {
+    position: fixed; top: 72px; left: 16px; z-index: 15;
+    width: 200px;
+    background: rgba(15, 21, 38, 0.85);
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 12px;
+    padding: 12px 14px;
+    color: #fff;
+  }
+  .viewer-panel .vp-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-bottom: 7px; }
+  .viewer-panel ul { margin: 0; padding: 0 0 0 14px; font-size: 11.5px; line-height: 1.6; color: rgba(255,255,255,0.85); }
+  .viewer-panel .vp-toggle {
+    margin-top: 10px; width: 100%; font: inherit; font-size: 11.5px; font-weight: 600;
+    padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.06); color: #fff; cursor: pointer;
+  }
+  .viewer-panel .vp-toggle:hover { background: rgba(255,255,255,0.12); }
+
+  /* Drop overlay — appears when dragging a file onto the page while in the viewer. */
+  body.dragging::after {
+    content: "arraste solto \2014 importação requer o servidor local (./dev.sh)";
+    position: fixed; inset: 16px;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+    background: rgba(10, 14, 26, 0.92);
+    backdrop-filter: blur(12px);
+    border: 2px dashed rgba(255,255,255,0.25);
+    border-radius: 18px;
+    font-size: 18px; font-weight: 500;
+    color: var(--text);
+    z-index: 100;
+    pointer-events: none;
+    padding: 24px;
+  }
+
+  /* Small inline toast used for the "no backend in this build" explainer. */
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    max-width: min(420px, calc(100% - 32px));
+    background: #16223b; border: 1px solid rgba(255,255,255,0.12);
+    color: var(--text); font-size: 12.5px; line-height: 1.5;
+    padding: 12px 16px; border-radius: 12px; z-index: 200;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+
+<script>
+// --- Real data: the 3 pre-rendered CubiCasa5K demo plans, embedded so the
+// build works fully offline (no backend, no network). Same data the
+// hosted static preview (floorplan-to-3d.pages.dev) serves.
+const __DEMOS__ = {"1191":{"canvas_size":[512,512],"content_rect":[0,93,512,325],"polygons":{"wall":[{"outer":[[407.0,391.0],[407.0,397.0],[413.0,397.0],[413.0,391.0]],"holes":[]},{"outer":[[317.0,394.0],[321.0,399.0],[323.0,397.0],[375.0,397.0],[375.0,391.0],[319.0,391.0]],"holes":[]},{"outer":[[233.0,390.0],[233.0,397.0],[251.0,397.0],[255.0,400.0],[259.0,396.0],[253.0,390.0]],"holes":[]},{"outer":[[150.0,383.0],[150.0,397.0],[170.0,397.0],[170.0,390.0],[159.0,390.0],[158.0,383.0]],"holes":[]},{"outer":[[26.0,349.0],[26.0,356.0],[32.0,356.0],[32.0,350.0]],"holes":[]},{"outer":[[407.0,318.0],[407.0,327.0],[413.0,327.0],[413.0,318.0]],"holes":[]},{"outer":[[138.0,311.0],[138.0,314.0],[155.0,315.0],[155.0,348.0],[137.0,349.0],[137.0,356.0],[149.0,356.0],[150.0,362.0],[158.0,362.0],[158.0,311.0]],"holes":[]},{"outer":[[107.0,311.0],[100.0,310.0],[100.0,348.0],[64.0,349.0],[63.0,356.0],[107.0,356.0],[107.0,349.0],[103.0,348.0],[103.0,315.0]],"holes":[]},{"outer":[[431.0,282.0],[431.0,290.0],[438.0,290.0],[438.0,284.0]],"holes":[]},{"outer":[[26.0,334.0],[32.0,334.0],[33.0,289.0],[103.0,290.0],[103.0,279.0],[100.0,279.0],[99.0,286.0],[33.0,286.0],[32.0,279.0],[27.0,279.0]],"holes":[]},{"outer":[[26.0,230.0],[26.0,264.0],[32.0,264.0],[32.0,248.0],[34.0,246.0],[99.0,246.0],[100.0,258.0],[103.0,258.0],[103.0,243.0],[33.0,243.0],[32.0,229.0]],"holes":[]},{"outer":[[476.0,214.0],[469.0,214.0],[468.0,221.0],[455.0,221.0],[455.0,224.0],[469.0,225.0],[470.0,270.0],[469.0,282.0],[453.0,283.0],[453.0,290.0],[476.0,290.0]],"holes":[]},{"outer":[[353.0,214.0],[353.0,267.0],[358.0,268.0],[358.0,277.0],[379.0,277.0],[381.0,286.0],[406.0,286.0],[407.0,298.0],[413.0,298.0],[416.0,283.0],[383.0,282.0],[383.0,240.0],[430.0,239.0],[431.0,264.0],[434.0,264.0],[435.0,221.0],[431.0,221.0],[430.0,236.0],[384.0,236.0],[383.0,221.0],[380.0,221.0],[380.0,263.0],[357.0,264.0],[356.0,225.0],[363.0,224.0],[363.0,221.0],[357.0,221.0],[356.0,214.0]],"holes":[]},{"outer":[[427.0,179.0],[468.0,179.0],[469.0,193.0],[476.0,194.0],[476.0,172.0],[428.0,172.0]],"holes":[]},{"outer":[[353.0,194.0],[356.0,194.0],[357.0,179.0],[400.0,179.0],[400.0,172.0],[352.0,172.0]],"holes":[]},{"outer":[[307.0,172.0],[307.0,179.0],[331.0,179.0],[331.0,172.0]],"holes":[]},{"outer":[[274.0,168.0],[267.0,168.0],[267.0,263.0],[222.0,264.0],[222.0,267.0],[270.0,267.0],[270.0,180.0],[279.0,179.0],[279.0,172.0],[275.0,172.0]],"holes":[]},{"outer":[[26.0,167.0],[26.0,215.0],[32.0,215.0],[32.0,167.0]],"holes":[]},{"outer":[[268.0,147.0],[268.0,153.0],[274.0,154.0],[274.0,148.0]],"holes":[]},{"outer":[[237.0,147.0],[172.0,147.0],[172.0,154.0],[199.0,155.0],[199.0,217.0],[139.0,218.0],[138.0,221.0],[154.0,222.0],[154.0,267.0],[202.0,267.0],[202.0,251.0],[199.0,251.0],[198.0,264.0],[158.0,263.0],[158.0,222.0],[198.0,221.0],[199.0,234.0],[202.0,234.0],[202.0,155.0],[237.0,154.0]],"holes":[]},{"outer":[[64.0,147.0],[64.0,154.0],[100.0,155.0],[100.0,222.0],[118.0,221.0],[118.0,218.0],[103.0,217.0],[103.0,155.0],[127.0,154.0],[127.0,147.0]],"holes":[]},{"outer":[[26.0,147.0],[26.0,154.0],[32.0,154.0],[32.0,147.0]],"holes":[]}],"door":[{"outer":[[108.0,349.0],[108.0,356.0],[136.0,356.0],[136.0,349.0]],"holes":[]},{"outer":[[107.0,314.0],[137.0,314.0],[137.0,311.0],[108.0,311.0]],"holes":[]},{"outer":[[407.0,299.0],[407.0,317.0],[413.0,317.0],[413.0,299.0]],"holes":[]},{"outer":[[100.0,291.0],[100.0,309.0],[103.0,309.0],[103.0,291.0]],"holes":[]},{"outer":[[431.0,265.0],[431.0,281.0],[434.0,281.0],[434.0,265.0]],"holes":[]},{"outer":[[203.0,264.0],[203.0,267.0],[221.0,267.0],[221.0,264.0]],"holes":[]},{"outer":[[100.0,259.0],[100.0,278.0],[103.0,278.0],[103.0,259.0]],"holes":[]},{"outer":[[199.0,235.0],[199.0,250.0],[202.0,250.0],[202.0,235.0]],"holes":[]},{"outer":[[100.0,223.0],[100.0,242.0],[103.0,242.0],[103.0,223.0]],"holes":[]},{"outer":[[436.0,221.0],[436.0,224.0],[454.0,224.0],[454.0,221.0]],"holes":[]},{"outer":[[364.0,221.0],[364.0,224.0],[379.0,224.0],[379.0,221.0]],"holes":[]},{"outer":[[119.0,218.0],[119.0,221.0],[138.0,220.0],[138.0,218.0]],"holes":[]},{"outer":[[469.0,195.0],[469.0,213.0],[476.0,213.0],[476.0,195.0]],"holes":[]},{"outer":[[353.0,195.0],[353.0,213.0],[356.0,213.0],[356.0,195.0]],"holes":[]},{"outer":[[332.0,172.0],[332.0,179.0],[351.0,179.0],[351.0,172.0]],"holes":[]}],"window":[{"outer":[[255.0,401.0],[267.0,414.0],[273.0,412.0],[275.0,417.0],[300.0,417.0],[300.0,411.0],[273.0,411.0],[260.0,397.0]],"holes":[]},{"outer":[[318.0,397.0],[315.0,396.0],[304.0,407.0],[303.0,410.0],[306.0,413.0],[309.0,413.0],[320.0,401.0]],"holes":[]},{"outer":[[171.0,390.0],[171.0,397.0],[232.0,397.0],[232.0,390.0]],"holes":[]},{"outer":[[150.0,363.0],[150.0,382.0],[157.0,383.0],[158.0,363.0]],"holes":[]},{"outer":[[26.0,335.0],[26.0,348.0],[33.0,350.0],[33.0,356.0],[63.0,355.0],[63.0,349.0],[34.0,349.0],[32.0,347.0],[32.0,335.0]],"holes":[]},{"outer":[[413.0,328.0],[407.0,328.0],[407.0,389.0],[404.0,391.0],[376.0,391.0],[376.0,397.0],[406.0,397.0],[406.0,391.0],[413.0,390.0]],"holes":[]},{"outer":[[438.0,283.0],[439.0,290.0],[452.0,290.0],[452.0,283.0]],"holes":[]},{"outer":[[417.0,283.0],[418.0,290.0],[430.0,290.0],[430.0,283.0]],"holes":[]},{"outer":[[26.0,265.0],[26.0,279.0],[32.0,278.0],[32.0,265.0]],"holes":[]},{"outer":[[26.0,216.0],[26.0,229.0],[31.0,229.0],[32.0,216.0]],"holes":[]},{"outer":[[401.0,179.0],[426.0,179.0],[427.0,172.0],[401.0,172.0]],"holes":[]},{"outer":[[280.0,172.0],[280.0,179.0],[306.0,179.0],[306.0,172.0]],"holes":[]},{"outer":[[238.0,147.0],[238.0,154.0],[266.0,154.0],[267.0,167.0],[274.0,167.0],[274.0,155.0],[267.0,153.0],[267.0,147.0]],"holes":[]},{"outer":[[128.0,147.0],[128.0,154.0],[171.0,154.0],[171.0,147.0]],"holes":[]},{"outer":[[26.0,166.0],[32.0,166.0],[32.0,156.0],[34.0,154.0],[63.0,154.0],[63.0,147.0],[33.0,147.0],[33.0,154.0],[26.0,155.0]],"holes":[]}]},"input_image_b64":"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85vsG12Tn39U9+c/v6YWRRHHjkl+6xNOpxPl5UX405/+aI6Pj/d6K7F3796wX/ziF5LckF61apW9urraNm/ePK0oitEAUF5e3qzT6UKkKF8uXV1dqt/+9pd692dxPe5zYmPDXa+++gvVWK8JCVGL1dXVA1LG7S0dHR3GNWvW+HzjDzABIKIxslqtKgCpABASElKfkZGRdKNrMjIyvB7XZ8LlqOTBBx/0RrGDIxnnzp2bqNVqQ71RibdkZGRg1apVclQVIUclkxUVFeU37SrHABAREQUhJgBERERBiAkAERFREGICQEREFISYABAREQUhJgBERERBiAkAERFREGICQEREFISYABAREQUhJgBERERBiAkAERFREGICQEREFISYABAREQUhJgBERERByG+WLSQi8meNjY1obGwEAAiCAADo7+/Hd77zneiMjAxYLBacPXtWyMnJUTJMmqRPPvlE+8Ybb0CjGdm8vvPOOysOHjw46Tra29tx9913T7ocJgBERF7gcrlQWloKs9kMQRAwY8YM5OXlDTunsbER69atU331q19Fe3s7SkpKBIXCJYn09fUJ9957L3Q63YhjZWVlmptuumnSdRQWFk66DIAJABGRpERRRGFhIZxOJ5YvX46wsDClQyLyiAkAEZFEmpubce7cOaxfvx5arVbpcCjIOBwO2O126PX6MZ3PBCCAXblyBQCg1+sRExOjcDREga26uhomkwlbt25VOhQKcKIojtjX3t6Onp4exMbGDht/4E4KrqVSqVRMAALYmTNnMHfuXPT29uL8+fNwOp0QRRGCIECj0WDJkiX8lkIkgYsXL8JqtWLp0qVKh0JBShCEwcGlY8UEIIBFRUVh1qxZHo/Z7XacPn0aFosFKSkpmDt3rszREQWGgYEBNDU1Yd26dUqHQkHAYrF4HGCYmJiI2NhYOBwOhISEDO7XaDTDtt1cLpeL8wAEqZCQEKxcuRLr169HREQEDh06hPb2dqXDIvI7hYWFbPxJNmVlZVi8eLHHYxqNxmNyMBomAISpU6diy5YtaGlpQVlZmdLhEPmNxsZGpKWlKR0GBRGbzebxG/1EMAGgQUuWLEF8fDxOnDihdChEfqG+vh4ZGRlKh0FBYrTu/4liAkDDpKamYtq0aewJILoBp9PpcbY3Im8pLCzE8uXLJSuPv700QmpqKrq7u9HW1obk5GSl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"},"4068":{"canvas_size":[512,512],"content_rect":[0,171,512,169],"polygons":{"wall":[{"outer":[[172.0,315.0],[172.0,321.0],[216.0,321.0],[216.0,315.0]],"holes":[]},{"outer":[[252.0,302.0],[252.0,314.0],[247.0,315.0],[247.0,321.0],[258.0,321.0],[258.0,302.0]],"holes":[]},{"outer":[[27.0,264.0],[27.0,321.0],[65.0,321.0],[65.0,315.0],[33.0,314.0],[34.0,279.0],[98.0,279.0],[99.0,314.0],[85.0,315.0],[85.0,321.0],[151.0,321.0],[151.0,315.0],[126.0,315.0],[125.0,301.0],[123.0,301.0],[122.0,315.0],[102.0,315.0],[101.0,277.0],[34.0,277.0],[33.0,264.0]],"holes":[]},{"outer":[[27.0,217.0],[27.0,227.0],[33.0,227.0],[34.0,220.0],[98.0,220.0],[99.0,257.0],[101.0,258.0],[101.0,221.0],[103.0,220.0],[100.0,216.0],[98.0,218.0],[64.0,218.0],[63.0,216.0]],"holes":[]},{"outer":[[258.0,177.0],[163.0,177.0],[163.0,195.0],[170.0,196.0],[170.0,217.0],[123.0,218.0],[123.0,281.0],[125.0,281.0],[125.0,221.0],[152.0,221.0],[152.0,269.0],[145.0,271.0],[145.0,273.0],[153.0,273.0],[154.0,221.0],[172.0,220.0],[172.0,183.0],[251.0,183.0],[252.0,197.0],[258.0,197.0]],"holes":[]},{"outer":[[27.0,204.0],[34.0,204.0],[35.0,185.0],[98.0,183.0],[99.0,196.0],[101.0,196.0],[102.0,183.0],[153.0,183.0],[153.0,177.0],[27.0,177.0]],"holes":[]}],"door":[{"outer":[[228.0,315.0],[228.0,321.0],[246.0,321.0],[246.0,315.0]],"holes":[]},{"outer":[[152.0,315.0],[152.0,321.0],[171.0,321.0],[171.0,315.0]],"holes":[]},{"outer":[[66.0,315.0],[66.0,321.0],[84.0,321.0],[84.0,315.0]],"holes":[]},{"outer":[[123.0,282.0],[122.0,294.0],[123.0,300.0],[125.0,300.0],[125.0,282.0]],"holes":[]},{"outer":[[126.0,271.0],[126.0,273.0],[144.0,273.0],[144.0,271.0]],"holes":[]},{"outer":[[99.0,258.0],[99.0,276.0],[101.0,276.0],[101.0,259.0]],"holes":[]},{"outer":[[103.0,218.0],[104.0,220.0],[122.0,220.0],[122.0,218.0]],"holes":[]},{"outer":[[99.0,197.0],[99.0,215.0],[101.0,216.0],[101.0,197.0]],"holes":[]}],"window":[{"outer":[[217.0,315.0],[217.0,321.0],[226.0,321.0],[226.0,315.0]],"holes":[]},{"outer":[[27.0,243.0],[26.0,262.0],[33.0,263.0],[33.0,243.0]],"holes":[]},{"outer":[[27.0,228.0],[26.0,239.0],[33.0,239.0],[33.0,228.0]],"holes":[]},{"outer":[[27.0,205.0],[26.0,215.0],[34.0,216.0],[34.0,205.0]],"holes":[]},{"outer":[[252.0,198.0],[252.0,301.0],[258.0,301.0],[258.0,198.0]],"holes":[]},{"outer":[[154.0,177.0],[154.0,183.0],[162.0,183.0],[162.0,177.0]],"holes":[]}]},"input_image_b64":"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"},"3676":{"canvas_size":[512,512],"content_rect":[0,126,512,260],"polygons":{"wall":[{"outer":[[356.0,341.0],[356.0,349.0],[511.0,349.0],[511.0,315.0],[500.0,315.0],[499.0,341.0],[376.0,341.0],[375.0,311.0],[372.0,311.0],[372.0,340.0]],"holes":[]},{"outer":[[72.0,308.0],[72.0,349.0],[317.0,349.0],[317.0,341.0],[85.0,341.0],[84.0,308.0]],"holes":[]},{"outer":[[357.0,137.0],[357.0,152.0],[372.0,153.0],[372.0,275.0],[375.0,275.0],[376.0,152.0],[499.0,152.0],[500.0,268.0],[511.0,268.0],[511.0,137.0]],"holes":[]},{"outer":[[264.0,137.0],[264.0,152.0],[304.0,152.0],[305.0,177.0],[317.0,178.0],[317.0,268.0],[292.0,269.0],[292.0,273.0],[345.0,273.0],[345.0,269.0],[321.0,268.0],[320.0,153.0],[336.0,152.0],[336.0,137.0]],"holes":[]},{"outer":[[72.0,205.0],[84.0,205.0],[85.0,152.0],[245.0,152.0],[245.0,137.0],[72.0,137.0]],"holes":[]}],"door":[{"outer":[[318.0,341.0],[318.0,349.0],[355.0,349.0],[355.0,341.0]],"holes":[]},{"outer":[[72.0,278.0],[72.0,307.0],[84.0,307.0],[84.0,278.0]],"holes":[]},{"outer":[[372.0,276.0],[372.0,310.0],[375.0,310.0],[375.0,276.0]],"holes":[]},{"outer":[[346.0,269.0],[346.0,273.0],[370.0,273.0],[370.0,269.0]],"holes":[]}],"window":[{"outer":[[500.0,269.0],[500.0,314.0],[511.0,314.0],[511.0,269.0]],"holes":[]},{"outer":[[72.0,206.0],[72.0,275.0],[84.0,275.0],[84.0,206.0]],"holes":[]},{"outer":[[337.0,137.0],[337.0,152.0],[356.0,152.0],[356.0,137.0]],"holes":[]},{"outer":[[246.0,137.0],[246.0,152.0],[263.0,152.0],[263.0,137.0]],"holes":[]}]},"input_image_b64":"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"}};
+
+const PLAN_META = {
+  "1191": { name: "Planta Arquitetural", tag: "Exemplo" },
+  "4068": { name: "Planta Compacta",     tag: "Exemplo" },
+  "3676": { name: "Casa Alongada",       tag: "Exemplo" },
+};
+const PLAN_ORDER = ["1191", "4068", "3676"];
+
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- =====================================================================
+     SCREEN 1 — Home
+===================================================================== -->
+<div class="screen active" id="screen-home">
+  <div class="topbar">
+    <div class="brand-mark">3D</div>
+    <div class="topbar-titles">
+      <div class="t1">Floor3D</div>
+      <div class="t2">Planta → 3D</div>
+    </div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-icons">
+      <button class="icon-btn" title="Sincronização (não disponível offline)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6-1.5A4.5 4.5 0 0 0 6.5 19h11z"/></svg>
+      </button>
+      <button class="icon-btn" title="Configurações">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <div class="demo-badge">DEMO</div>
+      <button class="icon-btn" id="btn-reset-home" title="Recarregar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="scroll-area">
+    <div class="status-banner" id="home-status-banner">
+      <svg class="sb-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.6 4.9L18 8l-4.4 1.1L12 14l-1.6-4.9L6 8l4.4-1.1L12 2z"/></svg>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="home-status-text">Carregando…</span>
+      <span class="sb-via" id="home-status-via"></span>
+    </div>
+
+    <div class="import-card">
+      <div class="ic-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </div>
+      <div class="ic-body">
+        <h2>Importar Planta 2D</h2>
+        <p>Parser local analisa — sem servidor de inferência rodando nesta versão offline.</p>
+        <button class="pill-btn" id="btn-import">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Escolher arquivo
+        </button>
+        <input type="file" id="file-input" accept=".svg,.png,.jpg,.jpeg" hidden>
+      </div>
+    </div>
+
+    <div class="section-label">Modos</div>
+    <div class="modes-grid">
+      <button class="mode-card mc-chat locked" disabled>
+        <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        <svg class="mc-corner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <div><div class="mc-title">Chat com IA</div><div class="mc-sub">Em breve</div></div>
+      </button>
+
+      <button class="mode-card mc-viewer360" id="card-viewer360">
+        <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <svg class="mc-corner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <div><div class="mc-title">Visualizador 360°</div><div class="mc-sub">Gira e explora a casa 3D</div></div>
+      </button>
+
+      <button class="mode-card mc-materials" id="card-materials">
+        <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="12" y2="15"/></svg>
+        <svg class="mc-corner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <div><div class="mc-title">Materiais de Obra</div><div class="mc-sub">Conta tijolos, cimento, areia e mais</div></div>
+      </button>
+
+      <button class="mode-card mc-blockout locked" disabled>
+        <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        <svg class="mc-corner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <div><div class="mc-title">Blockout Preciso</div><div class="mc-sub">Em breve</div></div>
+      </button>
+
+      <button class="mode-card mc-library" id="card-library">
+        <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <svg class="mc-corner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <div><div class="mc-title">Biblioteca</div><div class="mc-sub">Plantas organizadas em pastas</div></div>
+      </button>
+
+      <button class="mode-card mc-hydraulic locked" disabled>
+        <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5s6.5 7.2 6.5 12a6.5 6.5 0 1 1-13 0c0-4.8 6.5-12 6.5-12z"/></svg>
+        <svg class="mc-corner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <div><div class="mc-title">Planta Hidráulica</div><div class="mc-sub">Em breve — exige novo modelo</div></div>
+      </button>
+
+      <button class="mode-card mc-gaussian locked" disabled>
+        <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.2 6.8H21l-5.6 4.2 2.2 6.8L12 15.6l-5.6 4.2 2.2-6.8L3 8.8h6.8z"/></svg>
+        <svg class="mc-corner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <div><div class="mc-title">Gaussian Splatting</div><div class="mc-sub">Em breve</div></div>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- =====================================================================
+     SCREEN 2 — Biblioteca
+===================================================================== -->
+<div class="screen" id="screen-library">
+  <div class="topbar">
+    <button class="back-btn" data-back-to="screen-home">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="topbar-titles"><div class="t1">Biblioteca</div><div class="t2">3 plantas de exemplo</div></div>
+  </div>
+  <div class="scroll-area">
+    <div class="lib-actions">
+      <button class="lib-action-btn upload" id="btn-lib-upload">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Enviar Arquivo
+        <small>Auto-detectar</small>
+      </button>
+      <button class="lib-action-btn manual" id="btn-lib-manual">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        Planta à Mão
+        <small>Inteligência estrutural</small>
+      </button>
+    </div>
+
+    <div class="section-label">Pastas</div>
+    <div class="folders-empty">
+      <div class="fe-title">Nenhuma pasta criada</div>
+      Toque em "Nova pasta" para organizar (não disponível nesta versão offline).
+    </div>
+
+    <div class="section-label">Plantas (raiz)</div>
+    <div id="library-list"></div>
+  </div>
+</div>
+
+<!-- =====================================================================
+     SCREEN 3 — Materiais de Obra
+===================================================================== -->
+<div class="screen" id="screen-materials">
+  <div class="topbar">
+    <button class="back-btn" data-back-to="screen-home">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="topbar-titles"><div class="t1">Materiais de Obra</div><div class="t2">Estimativa a partir das paredes extraídas</div></div>
+  </div>
+  <div class="scroll-area">
+    <div class="mat-note">
+      As plantas do CubiCasa5K usadas aqui não trazem uma escala real embutida
+      (as coordenadas são em pixels do desenho, não em metros). Para uma
+      estimativa útil, calibre abaixo — informe quantos metros reais
+      correspondem a 100 unidades do desenho. Sem calibrar, mostramos apenas
+      o comprimento em unidades de desenho.
+    </div>
+
+    <div class="mat-field">
+      <label for="mat-plan">Planta</label>
+      <select id="mat-plan"></select>
+    </div>
+
+    <div class="mat-row">
+      <div class="mat-field">
+        <label for="mat-scale">Metros por 100 unidades</label>
+        <input type="number" id="mat-scale" placeholder="ex: 450" min="0" step="any">
+      </div>
+      <div class="mat-field">
+        <label for="mat-height">Pé-direito (m)</label>
+        <input type="number" id="mat-height" value="2.8" min="0" step="0.1">
+      </div>
+    </div>
+    <div class="mat-field">
+      <label for="mat-brick-type">Tipo de tijolo/bloco</label>
+      <select id="mat-brick-type"></select>
+    </div>
+    <div class="mat-hint">Valores de referência comuns em tabelas de orçamento — não vêm de IA nem do modelo de visão; ajuste conforme seu fornecedor e traço de argamassa.</div>
+
+    <div class="mat-row">
+      <div class="mat-field">
+        <label for="mat-bricks">Blocos por m² de parede</label>
+        <input type="number" id="mat-bricks" value="60" min="0" step="1">
+      </div>
+      <div class="mat-field">
+        <label for="mat-cement">Sacos de cimento por m²</label>
+        <input type="number" id="mat-cement" value="0.4" min="0" step="0.05">
+      </div>
+    </div>
+
+    <div class="section-label" style="margin-top:24px">Mão de obra</div>
+    <div class="mat-row">
+      <div class="mat-field">
+        <label for="mat-productivity">Produtividade (m²/hora · 1 pedreiro)</label>
+        <input type="number" id="mat-productivity" value="1.0" min="0.1" step="0.1">
+      </div>
+      <div class="mat-field">
+        <label for="mat-workday">Horas por dia de trabalho</label>
+        <input type="number" id="mat-workday" value="8" min="1" step="1">
+      </div>
+    </div>
+    <div class="mat-hint">Cobre só o assentamento da alvenaria (não inclui reboco, elétrica, hidráulica ou acabamento). Produtividade varia muito por equipe — ajuste ao seu caso.</div>
+
+    <div class="mat-results" id="mat-results">
+      <div class="mat-placeholder" id="mat-placeholder">Informe a escala para calcular a estimativa.</div>
+    </div>
+  </div>
+</div>
+
+<!-- =====================================================================
+     SCREEN 4 — Visualizador 3D
+===================================================================== -->
+<div class="screen" id="screen-viewer">
+  <div class="topbar">
+    <button class="back-btn" data-back-to="screen-home">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="topbar-titles">
+      <div class="t1">Visualizador 3D</div>
+      <div class="t2" id="status">Ready.</div>
+    </div>
+  </div>
+
+  <canvas id="scene"></canvas>
+
+  <div class="viewer-panel">
+    <div class="vp-title">Controles 3D</div>
+    <ul>
+      <li>Arrastar: rotacionar</li>
+      <li>Pinça / scroll: zoom</li>
+      <li>2 dedos: mover</li>
+    </ul>
+    <button class="vp-toggle" id="toggle-view">Show original</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// =====================================================================
+// Dashboard navigation, library, materials calculator — deliberately a
+// PLAIN script (not type="module"), independent of Three.js/the CDN
+// import below. If the 3D engine's import ever fails (flaky connection,
+// CDN blocked by a firewall, offline), the rest of the app — home,
+// library, materials estimator — keeps working; only the 3D viewer
+// itself degrades, with an explicit message instead of a silent freeze.
+// =====================================================================
+let currentPlanKey = PLAN_ORDER[0];
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("active", s.id === id));
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll("[data-back-to]").forEach(btn => {
+  btn.addEventListener("click", () => showScreen(btn.dataset.backTo));
+});
+
+function openViewer(key) {
+  currentPlanKey = key;
+  showScreen("screen-viewer");
+  const statusEl = document.getElementById("status");
+  if (window.loadDemo) {
+    window.loadDemo(key);
+  } else {
+    // The 3D engine (Three.js, loaded from a CDN) hasn't finished
+    // initializing yet — or failed to load at all. Queue the request;
+    // the module script picks it up as soon as it's ready. If it never
+    // becomes ready, say so explicitly instead of leaving a blank canvas.
+    window.__pendingPlanKey = key;
+    statusEl.textContent = "Carregando motor 3D…";
+    setTimeout(() => {
+      if (!window.__threeReady) {
+        statusEl.textContent = "Não foi possível carregar o Three.js via CDN (unpkg.com) — verifique sua conexão.";
+      }
+    }, 5000);
+  }
+}
+
+let toastTimer = null;
+function showToast(msg, ms = 4200) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+// ---- Home screen ----
+function updateHomeBanner() {
+  const data = __DEMOS__[currentPlanKey];
+  const w = data.polygons.wall.length, d = data.polygons.door.length, win = data.polygons.window.length;
+  document.getElementById("home-status-text").innerHTML =
+    `<b>${w} paredes</b>, ${d} portas, ${win} janelas — ${PLAN_META[currentPlanKey].name}`;
+  document.getElementById("home-status-via").textContent = "via parser local (CubiCasa5K)";
+}
+updateHomeBanner();
+
+document.getElementById("btn-reset-home").addEventListener("click", () => {
+  currentPlanKey = PLAN_ORDER[0];
+  updateHomeBanner();
+});
+
+document.getElementById("btn-import").addEventListener("click", () => {
+  document.getElementById("file-input").click();
+});
+document.getElementById("file-input").addEventListener("change", () => {
+  const f = document.getElementById("file-input");
+  if (f.files.length) {
+    showToast("Esta build é 100% offline (sem backend/rede) — a importação real de novas plantas exige rodar \u201c./dev.sh\u201d localmente. Veja as 3 plantas de exemplo na Biblioteca.");
+    f.value = "";
+  }
+});
+
+document.getElementById("card-viewer360").addEventListener("click", () => openViewer(currentPlanKey));
+document.getElementById("card-library").addEventListener("click", () => showScreen("screen-library"));
+document.getElementById("card-materials").addEventListener("click", () => showScreen("screen-materials"));
+
+// ---- Library screen ----
+function renderLibrary() {
+  const list = document.getElementById("library-list");
+  list.innerHTML = "";
+  for (const key of PLAN_ORDER) {
+    const data = __DEMOS__[key];
+    const meta = PLAN_META[key];
+    const w = data.polygons.wall.length, d = data.polygons.door.length, win = data.polygons.window.length;
+    const card = document.createElement("div");
+    card.className = "plan-card";
+    card.innerHTML = `
+      <img class="pc-thumb" src="data:image/png;base64,${data.input_image_b64}" alt="">
+      <div class="pc-body">
+        <div class="pc-title-row">
+          <span class="pc-title">${meta.name}</span>
+          <span class="pc-tag">${meta.tag}</span>
+        </div>
+        <div class="pc-meta">${w} paredes · ${d} portas · ${win} janelas</div>
+      </div>
+      <button class="pc-open">Abrir</button>
+    `;
+    card.querySelector(".pc-open").addEventListener("click", () => openViewer(key));
+    list.appendChild(card);
+  }
+}
+renderLibrary();
+
+document.getElementById("btn-lib-upload").addEventListener("click", () => {
+  showToast("Esta build é 100% offline — envio/detecção automática exige o servidor local (./dev.sh) com o modelo treinado.");
+});
+document.getElementById("btn-lib-manual").addEventListener("click", () => {
+  showToast("Reconhecimento de plantas desenhadas à mão não faz parte deste projeto (o modelo foi treinado só em plantas CAD do CubiCasa5K).");
+});
+
+// ---- Materials screen ----
+// Honest estimator: plan coordinates have no real scale, so results only
+// appear once the person supplies a calibration (meters per 100 drawing
+// units). Everything else is a labeled, editable rule-of-thumb, not a
+// precise quantity takeoff.
+const matPlanSelect = document.getElementById("mat-plan");
+for (const key of PLAN_ORDER) {
+  const opt = document.createElement("option");
+  opt.value = key;
+  opt.textContent = PLAN_META[key].name;
+  matPlanSelect.appendChild(opt);
+}
+
+// Rough, commonly-cited reference coefficients for a handful of masonry
+// unit types used in Brazilian construction budgeting tables. These are
+// NOT derived from the vision model or from any AI — they're plain,
+// editable rule-of-thumb numbers. Real consumption varies by supplier,
+// mortar joint thickness, and laying technique, which is why every field
+// stays user-editable after picking a preset.
+const BRICK_PRESETS = {
+  baiano9:   { label: "Tijolo baiano vazado 9×19×39 cm",   bricksPerM2: 60,   cementPerM2: 0.35, sandFactor: 0.030 },
+  ceramico6: { label: "Bloco cerâmico 6 furos 9×19×19 cm",  bricksPerM2: 25,   cementPerM2: 0.30, sandFactor: 0.028 },
+  concreto14:{ label: "Bloco de concreto 14×19×39 cm",      bricksPerM2: 12.5, cementPerM2: 0.40, sandFactor: 0.035 },
+  macico:    { label: "Tijolo maciço comum 5×10×20 cm",     bricksPerM2: 78,   cementPerM2: 0.45, sandFactor: 0.040 },
+  custom:    { label: "Personalizado (editar valores abaixo)", bricksPerM2: null, cementPerM2: null, sandFactor: 0.030 },
+};
+const brickTypeSelect = document.getElementById("mat-brick-type");
+for (const [id, preset] of Object.entries(BRICK_PRESETS)) {
+  const opt = document.createElement("option");
+  opt.value = id;
+  opt.textContent = preset.label;
+  brickTypeSelect.appendChild(opt);
+}
+brickTypeSelect.addEventListener("change", () => {
+  const preset = BRICK_PRESETS[brickTypeSelect.value];
+  if (preset.bricksPerM2 != null) document.getElementById("mat-bricks").value = preset.bricksPerM2;
+  if (preset.cementPerM2 != null) document.getElementById("mat-cement").value = preset.cementPerM2;
+  recomputeMaterials();
+});
+
+function wallDrawingLength(data) {
+  // Sum of every segment of every wall polygon's outer ring — the
+  // *perimeter* of each wall's drawn rectangle (long + short sides),
+  // roughly ~2x true centerline length. Divided by 2 as a simple,
+  // clearly-labeled approximation of centerline length.
+  let total = 0;
+  for (const p of data.polygons.wall) {
+    const pts = p.outer;
+    for (let i = 0; i < pts.length; i++) {
+      const [x1, y1] = pts[i];
+      const [x2, y2] = pts[(i + 1) % pts.length];
+      total += Math.hypot(x2 - x1, y2 - y1);
+    }
+  }
+  return total / 2;
+}
+
+function recomputeMaterials() {
+  const key = matPlanSelect.value || currentPlanKey;
+  const data = __DEMOS__[key];
+  const scaleInput = parseFloat(document.getElementById("mat-scale").value);
+  const results = document.getElementById("mat-results");
+  const drawingLen = wallDrawingLength(data);
+
+  if (!scaleInput || scaleInput <= 0) {
+    results.innerHTML = `
+      <div class="mr-row"><span class="mr-label">Comprimento de parede (unidades de desenho)</span><span class="mr-value">${drawingLen.toFixed(0)}</span></div>
+      <div class="mat-placeholder">Informe "metros por 100 unidades" acima para converter em m² / materiais.</div>
+    `;
+    return;
+  }
+
+  const metersPerUnit = scaleInput / 100;
+  const lengthM = drawingLen * metersPerUnit;
+  const heightM = parseFloat(document.getElementById("mat-height").value) || 2.8;
+  const bricksPerM2 = parseFloat(document.getElementById("mat-bricks").value) || 60;
+  const cementPerM2 = parseFloat(document.getElementById("mat-cement").value) || 0.4;
+  const sandFactor = (BRICK_PRESETS[brickTypeSelect.value] || {}).sandFactor ?? 0.03;
+  const productivity = parseFloat(document.getElementById("mat-productivity").value) || 1.0;
+  const hoursPerDay = parseFloat(document.getElementById("mat-workday").value) || 8;
+
+  const areaM2 = lengthM * heightM;
+  const bricks = Math.ceil(areaM2 * bricksPerM2);
+  const cementBags = Math.ceil(areaM2 * cementPerM2);
+  const sandM3 = (areaM2 * sandFactor).toFixed(2);
+  const laborHours = areaM2 / productivity;
+  const laborDays = (laborHours / hoursPerDay).toFixed(1);
+
+  results.innerHTML = `
+    <div class="mr-row"><span class="mr-label">Comprimento de parede</span><span class="mr-value">${lengthM.toFixed(1)} m</span></div>
+    <div class="mr-row"><span class="mr-label">Área de parede (~)</span><span class="mr-value">${areaM2.toFixed(1)} m²</span></div>
+    <div class="mr-row"><span class="mr-label">Blocos/tijolos (~)</span><span class="mr-value">${bricks.toLocaleString("pt-BR")}</span></div>
+    <div class="mr-row"><span class="mr-label">Cimento (~)</span><span class="mr-value">${cementBags} sacos</span></div>
+    <div class="mr-row"><span class="mr-label">Areia (~)</span><span class="mr-value">${sandM3} m³</span></div>
+    <div class="mr-row"><span class="mr-label">Mão de obra — assentamento (~)</span><span class="mr-value">${laborHours.toFixed(1)} h · ${laborDays} dia(s)</span></div>
+  `;
+}
+["mat-plan", "mat-scale", "mat-height", "mat-bricks", "mat-cement", "mat-productivity", "mat-workday"].forEach(id => {
+  document.getElementById(id).addEventListener("input", recomputeMaterials);
+});
+matPlanSelect.value = currentPlanKey;
+brickTypeSelect.value = "baiano9";
+recomputeMaterials();
+
+// ---- Drag & drop anywhere (same honest explainer as the upload button) ----
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; document.body.classList.add("dragging"); });
+window.addEventListener("dragleave", e => { e.preventDefault(); dragDepth--; if (dragDepth <= 0) document.body.classList.remove("dragging"); });
+window.addEventListener("dragover", e => { e.preventDefault(); });
+window.addEventListener("drop", e => {
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
+  showToast("Esta build é 100% offline — importação de novas plantas exige o servidor local (./dev.sh).");
+});
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+// -----------------------------------------------------------------------------
+// Constants — physical dimensions are in arbitrary world units. We rescale each
+// plan so its longest axis spans TARGET_PLAN_SIZE units; everything else is
+// measured proportionally so a small plan and a large plan look the same size.
+// -----------------------------------------------------------------------------
+const TARGET_PLAN_SIZE = 8.0;
+const WALL_HEIGHT      = 0.55;
+const DOOR_HEIGHT      = 0.40;       // ~75% of WALL_HEIGHT
+const WINDOW_SILL      = 0.16;       // bottom of glass
+const WINDOW_TOP       = 0.45;       // top of glass
+const RISE_DURATION_MS = 900;
+const STAGGER_MS       = 28;
+const EDGE_ANGLE_DEG   = 14;          // smaller -> more crease lines
+
+// Palette
+const COLOR_BG     = 0xf4f1ec;
+const COLOR_FLOOR  = 0xece8e1;
+const COLOR_WHITE  = 0xffffff;
+const COLOR_GLASS  = 0xdbe6ec;
+const COLOR_INK    = 0x1a1a1a;
+
+// -----------------------------------------------------------------------------
+// Three.js bootstrap
+// -----------------------------------------------------------------------------
+const canvas = document.getElementById("scene");
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(COLOR_BG);
+
+const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 200);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance   = 3.5;
+controls.maxDistance   = 40;
+controls.maxPolarAngle = Math.PI / 2 - 0.04;  // never go below ground
+
+// Lights: hemisphere for soft fill, one warm-ish directional sun for shape,
+// minimal ambient to lift shadows. Pure-white walls need careful balance —
+// too much directional makes them look gray on the lit side; too little
+// kills the sense of depth.
+const hemi = new THREE.HemisphereLight(0xffffff, 0xece8e1, 0.55);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(6, 12, 5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -8; sun.shadow.camera.right = 8;
+sun.shadow.camera.top  = 8;  sun.shadow.camera.bottom = -8;
+sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 40;
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+
+// Floor — a slightly darker shade than the background so the horizon reads.
+const floorGeom = new THREE.PlaneGeometry(60, 60);
+floorGeom.rotateX(-Math.PI / 2);
+const floor = new THREE.Mesh(
+  floorGeom,
+  new THREE.MeshStandardMaterial({ color: COLOR_FLOOR, roughness: 0.95, metalness: 0 })
+);
+floor.receiveShadow = true;
+scene.add(floor);
+
+// Materials are shared across all meshes so we don't pay the cost of
+// allocating per polygon, and so a future palette change is one line.
+const wallMat = new THREE.MeshStandardMaterial({ color: COLOR_WHITE, roughness: 0.85, metalness: 0 });
+const doorMat = new THREE.MeshStandardMaterial({ color: COLOR_WHITE, roughness: 0.85, metalness: 0 });
+const windowMat = new THREE.MeshPhysicalMaterial({
+  color: COLOR_GLASS,
+  transparent: true,
+  opacity: 0.42,
+  roughness: 0.08,
+  metalness: 0,
+  transmission: 0.35,
+  ior: 1.45,
+});
+const edgeMat = new THREE.LineBasicMaterial({ color: COLOR_INK, transparent: true, opacity: 0.78 });
+
+// Group containing the active plan; cleared on each load so we can reuse
+// the lights, camera, and floor across renders.
+const planGroup = new THREE.Group();
+scene.add(planGroup);
+
+// Last-loaded plan's camera framing. Used by the "Show original" toggle
+// to compute matching perspective and overhead camera positions.
+let currentFraming = null;
+let showingOriginal = false;
+
+// -----------------------------------------------------------------------------
+// Resize
+// -----------------------------------------------------------------------------
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  // updateStyle=true (the default) is critical: with `false`, Three.js sets
+  // only canvas.width/height (the drawing buffer, in device pixels) and
+  // leaves CSS layout to size the canvas by its HTML width/height attrs.
+  // For a <canvas> (replaced element), the intrinsic w/h from those attrs
+  // wins over CSS `inset: 0`, so the canvas's CSS box ended up at
+  // (viewport * devicePixelRatio) — bigger than the viewport, with the
+  // optical-axis center offscreen to the bottom-right.
+  renderer.setSize(w, h, true);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", onResize);
+onResize();
+
+// Auto-frame: position the camera so a sphere of `radius` around `center` fits
+// in view with a small margin. Uses the more restrictive of the horizontal /
+// vertical FOV so the model fits in both axes. Direction is fixed (south-east
+// looking down ~30°) so lighting and edge highlights stay consistent.
+function frameModel(center, radius) {
+  const fovY = THREE.MathUtils.degToRad(camera.fov);
+  const fovX = 2 * Math.atan(Math.tan(fovY / 2) * camera.aspect);
+  const dist = radius / Math.sin(Math.min(fovY, fovX) / 2) * 1.15;
+
+  const dir = new THREE.Vector3(0.55, 0.62, 0.85).normalize();
+  camera.position.copy(center).addScaledVector(dir, dist);
+  controls.target.copy(center);
+  controls.update();
+}
+
+// Compute the near-overhead camera position that frames the same sphere.
+// Keep a small Z offset so the up-vector doesn't align with the view
+// direction (which is degenerate for OrbitControls).
+function overheadPosition(center, radius) {
+  const fovY = THREE.MathUtils.degToRad(camera.fov);
+  const fovX = 2 * Math.atan(Math.tan(fovY / 2) * camera.aspect);
+  const dist = radius / Math.sin(Math.min(fovY, fovX) / 2) * 1.15;
+  return new THREE.Vector3(center.x, center.y + dist, center.z + 0.001);
+}
+
+// Camera tween — driven from the per-frame tick(). Used by the "Show
+// original" toggle to glide between perspective and overhead views.
+const cameraTween = { active: false };
+function tweenCamera(toPos, toTarget, duration = 600) {
+  cameraTween.fromPos = camera.position.clone();
+  cameraTween.toPos = toPos.clone();
+  cameraTween.fromTarget = controls.target.clone();
+  cameraTween.toTarget = toTarget.clone();
+  cameraTween.t0 = performance.now();
+  cameraTween.duration = duration;
+  cameraTween.active = true;
+}
+
+// -----------------------------------------------------------------------------
+// Polygon -> mesh
+//
+// Each polygon arrives as { outer: [[x, y], ...], holes: [[[x, y], ...], ...] }
+// where x, y are in canvas pixels (image space, Y-down). We center on the
+// plan's content rect, scale to world units, and build a THREE.Shape.
+// ExtrudeGeometry then sweeps it along the local Z axis; we rotate the
+// finished mesh by -90° around X so that local Z becomes world Y (up).
+// Scaling local Z animates wall height without rebuilding geometry.
+// -----------------------------------------------------------------------------
+function buildShape(outer, holes, scale, cx, cy) {
+  const shape = new THREE.Shape();
+  outer.forEach(([x, y], i) => {
+    const sx = (x - cx) * scale;
+    const sy = (y - cy) * scale;
+    if (i === 0) shape.moveTo(sx, sy);
+    else shape.lineTo(sx, sy);
+  });
+  shape.closePath();
+  for (const hole of holes ?? []) {
+    const path = new THREE.Path();
+    hole.forEach(([x, y], i) => {
+      const sx = (x - cx) * scale;
+      const sy = (y - cy) * scale;
+      if (i === 0) path.moveTo(sx, sy);
+      else path.lineTo(sx, sy);
+    });
+    path.closePath();
+    shape.holes.push(path);
+  }
+  return shape;
+}
+
+function buildExtrudedMesh(polygon, scale, cx, cy, depth, material, withEdges) {
+  const shape = buildShape(polygon.outer, polygon.holes, scale, cx, cy);
+  const geom = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: false,
+    curveSegments: 4,
+  });
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  // Local Z (extrusion axis) becomes world Y (up).
+  mesh.rotation.x = -Math.PI / 2;
+
+  if (withEdges) {
+    const edges = new THREE.EdgesGeometry(geom, EDGE_ANGLE_DEG);
+    mesh.add(new THREE.LineSegments(edges, edgeMat));
+  }
+  return mesh;
+}
+
+function polygonCentroidImage(poly) {
+  let sx = 0, sy = 0;
+  for (const [x, y] of poly.outer) { sx += x; sy += y; }
+  const n = poly.outer.length;
+  return [sx / n, sy / n];
+}
+
+// Bounding box (in image-pixel coordinates) over every polygon ring of every
+// class. We center the world on this bbox rather than on the SVG content rect:
+// the SVG can have whitespace inside its viewBox, so the building's geometric
+// center is not always the canvas center, which would otherwise leave the
+// orbit pivot off to one side of the model.
+function polygonsBBox(polygons) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const cls of ["wall", "door", "window"]) {
+    for (const p of polygons[cls] ?? []) {
+      for (const [x, y] of p.outer) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+// Build a textured plane that shows the original SVG laying flat under the
+// rising 3D geometry. Sized & positioned so its pixels align 1:1 with the
+// polygon coordinates, so as walls rise from y=0 they appear to extrude
+// directly out of the inked outlines on the floor.
+function buildInputImagePlane(b64, contentRect, scale, cx, cy) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const tex = new THREE.Texture(img);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      // We position the plane so canvas-top maps to world +Z (north), and the
+      // texture's natural orientation (image pixel (0,0) at top-left) needs to
+      // line up with that. flipY=false keeps the texture un-flipped so pixel
+      // (0,0) lands at UV (0,0) at the plane's south-west corner — which is
+      // exactly where canvas-top-left ends up after our rotation/translation.
+      tex.flipY = false;
+      tex.needsUpdate = true;
+
+      const [left, top, innerW, innerH] = contentRect;
+      const planeGeom = new THREE.PlaneGeometry(innerW * scale, innerH * scale);
+      planeGeom.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        // Keep the floor plane visible through the SVG's whitespace; the SVG
+        // itself is rendered with a transparent background server-side.
+        depthWrite: false,
+      });
+      const plane = new THREE.Mesh(planeGeom, mat);
+      // Position so the content rect aligns pixel-for-pixel with the polygons.
+      plane.position.set(
+        (left + innerW / 2 - cx) * scale,
+        0.002,                                  // tiny lift to avoid z-fighting with the floor
+        -(top + innerH / 2 - cy) * scale,
+      );
+      plane.userData.disposable = { texture: tex };
+      // Marker so the "Show original" toggle can leave this plane visible
+      // while hiding the extruded geometry on top of it.
+      plane.userData.isInputImage = true;
+      resolve(plane);
+    };
+    img.onerror = reject;
+    img.src = "data:image/png;base64," + b64;
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Animation — each mesh has a delay and a duration. Every frame we recompute
+// scale.z (which after rotation is world-Y), so the wall grows from a flat
+// footprint up to its full height.
+// -----------------------------------------------------------------------------
+const animations = [];
+
+function tick(now) {
+  for (const a of animations) {
+    const t = Math.min(1, Math.max(0, (now - a.start - a.delay) / a.duration));
+    const eased = 1 - Math.pow(1 - t, 3);     // cubic-out
+    // Math.max keeps a tiny epsilon so the geometry is never degenerate;
+    // a true zero scale crashes shadow calculations on some drivers.
+    a.mesh.scale.z = Math.max(0.001, eased);
+  }
+  if (cameraTween.active) {
+    const t = Math.min(1, (now - cameraTween.t0) / cameraTween.duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    camera.position.lerpVectors(cameraTween.fromPos, cameraTween.toPos, eased);
+    controls.target.lerpVectors(cameraTween.fromTarget, cameraTween.toTarget, eased);
+    if (t >= 1) cameraTween.active = false;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// -----------------------------------------------------------------------------
+// Plan lifecycle
+// -----------------------------------------------------------------------------
+function disposeMeshDeep(obj) {
+  if (obj.geometry) obj.geometry.dispose();
+  if (obj.userData?.disposable?.texture) obj.userData.disposable.texture.dispose();
+  for (const c of obj.children) disposeMeshDeep(c);
+}
+function clearPlan() {
+  while (planGroup.children.length > 0) {
+    const c = planGroup.children[0];
+    planGroup.remove(c);
+    disposeMeshDeep(c);
+  }
+  animations.length = 0;
+}
+
+async function loadPlan(data) {
+  clearPlan();
+
+  // Center on the polygon bbox, not the SVG content rect — the SVG often has
+  // whitespace inside its viewBox, so the building's geometric center can
+  // sit a meaningful distance off the canvas center. Anchoring on the bbox
+  // puts the orbit pivot exactly on the model.
+  const bbox = polygonsBBox(data.polygons);
+  const bw = bbox.maxX - bbox.minX;
+  const bh = bbox.maxY - bbox.minY;
+  if (!isFinite(bw) || bw <= 0 || bh <= 0) {
+    status.textContent = "No polygons in this plan.";
+    return;
+  }
+  const cx = (bbox.minX + bbox.maxX) / 2;
+  const cy = (bbox.minY + bbox.maxY) / 2;
+  const scale = TARGET_PLAN_SIZE / Math.max(bw, bh);
+
+  // Frame the camera on the model's actual world bbox. After centering, the
+  // model is at world (0, WALL_HEIGHT/2, 0), with horizontal extent bw*scale x
+  // bh*scale. Bounding sphere radius covers the diagonal plus a bit of height.
+  const halfW = bw * scale / 2;
+  const halfD = bh * scale / 2;
+  const center = new THREE.Vector3(0, WALL_HEIGHT / 2, 0);
+  const radius = Math.hypot(halfW, halfD, WALL_HEIGHT);
+  currentFraming = { center, radius };
+  // Reset to 3D view on each new sample — the toggle only persists within
+  // a single plan, not across loads, so visitors always start with the
+  // 3D reveal animation.
+  if (showingOriginal) setShowOriginal(false, /*animate*/ false);
+  frameModel(center, radius);
+
+  // Drop the input image in first so it appears under the geometry as the
+  // walls start rising. Awaiting here also lets the texture decode finish
+  // before the first paint, preventing a one-frame flash of blank floor.
+  if (data.input_image_b64) {
+    try {
+      const plane = await buildInputImagePlane(
+        data.input_image_b64, data.content_rect, scale, cx, cy,
+      );
+      planGroup.add(plane);
+    } catch (e) {
+      console.warn("input image failed to load:", e);
+    }
+  }
+
+  // One flat list so we can sort all elements by spatial centrality and
+  // get a single coherent stagger across walls/doors/windows.
+  const items = [];
+  for (const p of data.polygons.wall ?? [])   items.push({ poly: p, kind: "wall" });
+  for (const p of data.polygons.door ?? [])   items.push({ poly: p, kind: "door" });
+  for (const p of data.polygons.window ?? []) items.push({ poly: p, kind: "window" });
+  items.sort((a, b) => {
+    const [ax, ay] = polygonCentroidImage(a.poly);
+    const [bx, by] = polygonCentroidImage(b.poly);
+    return Math.hypot(ax - cx, ay - cy) - Math.hypot(bx - cx, by - cy);
+  });
+
+  const start = performance.now();
+
+  items.forEach((item, i) => {
+    let mesh;
+    if (item.kind === "wall") {
+      mesh = buildExtrudedMesh(item.poly, scale, cx, cy, WALL_HEIGHT, wallMat, true);
+      mesh.position.y = 0;
+    } else if (item.kind === "door") {
+      mesh = buildExtrudedMesh(item.poly, scale, cx, cy, DOOR_HEIGHT, doorMat, true);
+      mesh.position.y = 0;
+    } else {
+      // Windows are extruded between sill and lintel, so they read as
+      // glass slabs floating in the wall plane.
+      const depth = WINDOW_TOP - WINDOW_SILL;
+      mesh = buildExtrudedMesh(item.poly, scale, cx, cy, depth, windowMat, false);
+      mesh.position.y = WINDOW_SILL;
+    }
+    mesh.scale.z = 0.001;  // start collapsed
+    planGroup.add(mesh);
+    animations.push({
+      mesh,
+      start,
+      delay:    i * STAGGER_MS,
+      duration: RISE_DURATION_MS,
+    });
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Bridge to the nav script above: this module only runs if the Three.js CDN
+// import at the top of this block succeeded, so reaching this point means
+// window.__threeReady can safely become true.
+// -----------------------------------------------------------------------------
+window.__threeReady = true;
+
+const status = document.getElementById("status");
+function summarize(data) {
+  const w = data.polygons.wall.length;
+  const d = data.polygons.door.length;
+  const win = data.polygons.window.length;
+  return `${w} paredes · ${d} portas · ${win} janelas`;
+}
+
+let inFlight = false;
+async function loadDemo(key) {
+  if (inFlight || !__DEMOS__[key]) return;
+  inFlight = true;
+  status.textContent = "Extraindo…";
+  try {
+    const data = __DEMOS__[key];
+    status.textContent = summarize(data);
+    await loadPlan(data);
+  } catch (e) {
+    status.textContent = "Falhou: " + e.message;
+  } finally {
+    inFlight = false;
+  }
+}
+window.loadDemo = loadDemo;
+
+// "Show original" toggle — hides the extruded geometry and glides the
+// camera overhead so the input PNG (the floor texture under the 3D) reads
+// as a flat 2D plan. Toggling back restores the rise-from-flat view.
+const toggleViewBtn = document.getElementById("toggle-view");
+function setShowOriginal(on, animate = true) {
+  showingOriginal = on;
+  for (const child of planGroup.children) {
+    if (!child.userData?.isInputImage) child.visible = !on;
+  }
+  controls.enableRotate = !on;
+  toggleViewBtn.textContent = on ? "Show 3D" : "Show original";
+  if (!currentFraming) return;
+  const { center, radius } = currentFraming;
+  if (animate) {
+    tweenCamera(on ? overheadPosition(center, radius) : (() => {
+      const fovY = THREE.MathUtils.degToRad(camera.fov);
+      const fovX = 2 * Math.atan(Math.tan(fovY / 2) * camera.aspect);
+      const dist = radius / Math.sin(Math.min(fovY, fovX) / 2) * 1.15;
+      const dir = new THREE.Vector3(0.55, 0.62, 0.85).normalize();
+      return center.clone().addScaledVector(dir, dist);
+    })(), center);
+  }
+}
+toggleViewBtn.addEventListener("click", () => setShowOriginal(!showingOriginal));
+
+// If the nav script already queued a plan (user tapped "Visualizador 360°"
+// or a library card before this module finished loading from the CDN),
+// or as the default first paint, load it now.
+loadDemo(window.__pendingPlanKey || PLAN_ORDER[0]);
+window.__pendingPlanKey = null;
+</script>
+</body>
+</html>

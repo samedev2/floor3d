@@ -1,4 +1,4 @@
-"""PyTorch Dataset for CubiCasa5K. Image is the SVG rasterized via cairosvg, not F1_*.png (those don't share the SVG's coordinate space)."""
+"""PyTorch Dataset for CubiCasa5K. Image is the SVG rasterized via pymupdf, not F1_*.png (those don't share the SVG's coordinate space)."""
 
 from __future__ import annotations
 
@@ -78,9 +78,9 @@ class CubiCasaDataset(Dataset):
             self._mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
             self._std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
 
-        # Per-worker memo of indices whose SVG cairosvg can't render. CubiCasa5K
-        # has a small number of these (rotate(NaN) etc.); we skip past them in
-        # __getitem__ and log each path the first time we hit it.
+        # Per-worker memo of indices whose SVG the rasterizer can't render.
+        # CubiCasa5K has a small number of these (rotate(NaN) etc.); we skip
+        # past them in __getitem__ and log each path the first time we hit it.
         self._bad_seen: set[int] = set()
 
     def __len__(self) -> int:

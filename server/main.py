@@ -8,14 +8,13 @@ import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import cairosvg
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from buildingcv.extract_polygons import PolygonExtractor
-from buildingcv.svg_render import filtered_svg_bytes
+from buildingcv.svg_render import filtered_svg_bytes, rasterize_svg
 
 # Default location for downloaded weights — clean clone-and-go path. Local
 # training writes `.pt` to `runs/<version>/<timestamp>/`; export with
@@ -31,7 +30,11 @@ MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 # Repo root, derived once at import time. Used to resolve the viewer HTML
 # and the sample SVGs without depending on the cwd uvicorn was launched from.
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VIEWER_HTML = REPO_ROOT / "viewer" / "index.html"
+# The Floor3D dashboard (multi-screen app shell) is served at `/`; the
+# original minimal single-purpose viewer stays reachable at `/classic`.
+# If the dashboard file isn't present, `/` falls back to the classic viewer.
+DASHBOARD_HTML = REPO_ROOT / "viewer" / "index.dashboard.html"
+CLASSIC_VIEWER_HTML = REPO_ROOT / "viewer" / "index.html"
 
 # Curated samples shown as "Try a sample" buttons in the viewer. Keys are
 # short ids (used in the URL); values are dataset-relative paths. The set
@@ -82,8 +85,14 @@ def healthz() -> dict:
 
 @app.get("/")
 def index() -> FileResponse:
-    """Serve the viewer HTML at the root URL."""
-    return FileResponse(VIEWER_HTML)
+    """Serve the Floor3D dashboard at the root URL (classic viewer if absent)."""
+    return FileResponse(DASHBOARD_HTML if DASHBOARD_HTML.exists() else CLASSIC_VIEWER_HTML)
+
+
+@app.get("/classic")
+def classic_viewer() -> FileResponse:
+    """The original minimal viewer — sample buttons + drag-and-drop upload."""
+    return FileResponse(CLASSIC_VIEWER_HTML)
 
 
 # The viewer loads its sample plans from `./demos/{key}.json` so it works
@@ -102,14 +111,10 @@ def _attach_input_image(svg_path: Path, result: dict) -> dict:
     so what the user sees on the floor is exactly what the polygons came from.
     """
     _, _, inner_w, inner_h = result["content_rect"]
-    png = cairosvg.svg2png(
-        bytestring=filtered_svg_bytes(svg_path),
-        output_width=inner_w,
-        output_height=inner_h,
-        # No background_color → transparent PNG. The viewer renders this
-        # over a tinted floor plane, so transparency lets the floor color
-        # show through where the SVG has no ink.
-    )
+    # No background → transparent PNG. The viewer renders this over a tinted
+    # floor plane, so transparency lets the floor color show through where
+    # the SVG has no ink.
+    png = rasterize_svg(filtered_svg_bytes(svg_path), (inner_w, inner_h))
     result["input_image_b64"] = base64.b64encode(png).decode("ascii")
     return result
 
@@ -137,9 +142,9 @@ async def extract(svg: UploadFile = File(...)) -> dict:
     """Run the model on the uploaded SVG and return the polygon JSON.
 
     The extractor reads from a path (parses the SVG twice — once for native
-    dims, once for cairosvg). Easiest is to write the upload to a tempfile
-    and let it use the same code path as the CLI; the file is small (< MB
-    typical) and the temp dir is RAM-backed on macOS.
+    dims, once for the rasterizer). Easiest is to write the upload to a
+    tempfile and let it use the same code path as the CLI; the file is small
+    (< MB typical) and the temp dir is RAM-backed on macOS.
     """
     raw = await svg.read()
     if not raw:
@@ -156,9 +161,9 @@ async def extract(svg: UploadFile = File(...)) -> dict:
         try:
             result = extractor.extract(tmp_path)
         except Exception as e:
-            # Bad SVGs (cairosvg parse failures, NaN transforms in CubiCasa)
-            # land here. Return 422 so the viewer can show "this file
-            # couldn't be processed" rather than "server crashed".
+            # Bad SVGs (rasterizer parse failures, NaN transforms in
+            # CubiCasa) land here. Return 422 so the viewer can show "this
+            # file couldn't be processed" rather than "server crashed".
             raise HTTPException(status_code=422, detail=f"failed to extract: {e}") from e
         return _attach_input_image(tmp_path, result)
     finally:

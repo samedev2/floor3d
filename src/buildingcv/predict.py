@@ -18,6 +18,24 @@ from .model import build_model
 PANEL_TITLES = ("input", "ground truth", "prediction")
 LABEL_HEIGHT = 24
 
+# Small UI font for the panel labels. Try a few platform defaults by name
+# (PIL resolves bare names against the OS font dirs) before giving up on the
+# bitmap fallback. Covers Windows / macOS / common Linux without a hard path.
+_LABEL_FONT_CANDIDATES = (
+    "segoeui.ttf", "arial.ttf",           # Windows
+    "Helvetica.ttc", "Arial.ttf",         # macOS
+    "DejaVuSans.ttf", "LiberationSans-Regular.ttf",  # Linux
+)
+
+
+def _label_font(size: int = 14) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    for name in _LABEL_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
 
 def colorize(mask: np.ndarray) -> Image.Image:
     rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
@@ -40,10 +58,7 @@ def hconcat_with_titles(images: list[Image.Image], titles: list[str]) -> Image.I
     w = sum(im.width for im in images)
     out = Image.new("RGB", (w, h + LABEL_HEIGHT), (255, 255, 255))
     draw = ImageDraw.Draw(out)
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
-    except OSError:
-        font = ImageFont.load_default()
+    font = _label_font(14)
     x = 0
     for im, title in zip(images, titles):
         out.paste(im, (x, LABEL_HEIGHT))

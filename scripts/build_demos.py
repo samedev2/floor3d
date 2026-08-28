@@ -16,10 +16,8 @@ import json
 import os
 from pathlib import Path
 
-import cairosvg
-
 from buildingcv.extract_polygons import PolygonExtractor
-from buildingcv.svg_render import filtered_svg_bytes
+from buildingcv.svg_render import filtered_svg_bytes, rasterize_svg
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUN_DIR = REPO_ROOT / "weights"
@@ -37,11 +35,7 @@ SAMPLES: dict[str, str] = {
 
 def attach_input_image(svg_path: Path, result: dict) -> dict:
     _, _, inner_w, inner_h = result["content_rect"]
-    png = cairosvg.svg2png(
-        bytestring=filtered_svg_bytes(svg_path),
-        output_width=inner_w,
-        output_height=inner_h,
-    )
+    png = rasterize_svg(filtered_svg_bytes(svg_path), (inner_w, inner_h))
     result["input_image_b64"] = base64.b64encode(png).decode("ascii")
     return result
 

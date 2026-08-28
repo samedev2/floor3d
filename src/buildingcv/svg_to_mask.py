@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .labels import CLASS_TO_ID, FLOOR_ID, PAINT_ORDER, TOKEN_TO_CLASS
+from .svg_render import is_hidden
 
 SVG_NS = "{http://www.w3.org/2000/svg}"
 _POLYGON_TAG = f"{SVG_NS}polygon"
@@ -27,21 +28,6 @@ def _classify(tokens: frozenset[str]) -> str | None:
         if token in tokens:
             return cls
     return None
-
-
-def _is_hidden(elem: ET.Element) -> bool:
-    """True if the element (or its style) explicitly hides it from rendering.
-
-    cairosvg honors `display:none` and `visibility:hidden` when rasterizing
-    the input image. Without this check, svg_to_mask would still paint the
-    hidden subtrees onto the mask — which is exactly the bug behind GT masks
-    containing multiple floor plans (Floor 2/3 are display:none) while the
-    input image shows only Floor 1.
-    """
-    if elem.get("display") == "none" or elem.get("visibility") == "hidden":
-        return True
-    style = elem.get("style") or ""
-    return "display:none" in style.replace(" ", "") or "visibility:hidden" in style.replace(" ", "")
 
 
 def _polygon_points(elem: ET.Element) -> list[tuple[float, float]]:
@@ -63,7 +49,7 @@ def _collect(
     inherited: frozenset[str],
     out: dict[str, list[list[tuple[float, float]]]],
 ) -> None:
-    if _is_hidden(elem):
+    if is_hidden(elem):
         return
 
     own = elem.get("class")
