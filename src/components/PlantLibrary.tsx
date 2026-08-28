@@ -16,16 +16,20 @@ import {
   ChevronRight,
   Brain
 } from 'lucide-react';
-import { 
-  SemanticObject, 
-  RoomData, 
-  LAYERS, 
-  DimensionalContext 
+import {
+  SemanticObject,
+  RoomData,
+  LAYERS,
+  DimensionalContext
 } from '../floorplan/typesExtensions';
-import { 
-  HAND_DRAWN_PLAN, 
-  buildStructuralPlan 
+import {
+  HAND_DRAWN_PLAN,
+  buildStructuralPlan
 } from '../floorplan/structuralIntelligence';
+import {
+  savePlant as savePlantCloud,
+  getCurrentUser,
+} from '../lib/supabase';
 
 // ============================================
 // PLANT LIBRARY STORAGE
@@ -206,6 +210,55 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
     saveLibrary(library);
   }, [library]);
 
+  // Supabase sync (background, se logado)
+  const [cloudUser, setCloudUser] = useState<any>(null);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'ok' | 'error'>('idle');
+  const syncTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    getCurrentUser().then(u => { if (mounted) setCloudUser(u); });
+    return () => { mounted = false; };
+  }, []);
+
+  // Auto-sync para Supabase quando library muda (debounced)
+  useEffect(() => {
+    if (!cloudUser) return;
+    if (library.length === 0) return;
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    setSyncStatus('syncing');
+    syncTimeoutRef.current = setTimeout(async () => {
+      // Sincroniza a planta mais recente (ou todas se for pequeno)
+      const recent = library[0];
+      if (!recent) return;
+      try {
+        const result = await savePlantCloud({
+          name: recent.name,
+          image_data: recent.imageData,
+          width_meters: recent.context?.totalWidth || 0,
+          depth_meters: recent.context?.totalDepth || 0,
+          total_area: recent.totalArea,
+          total_walls: recent.totalWalls,
+          total_rooms: recent.totalRooms,
+          walls: recent.objects?.filter((o: any) => o.type === 'wall').map((o: any) => ({
+            start: { x: o.position[0] - Math.cos(o.rotation[1]) * o.dimensions.length / 2, y: o.position[2] - Math.sin(o.rotation[1]) * o.dimensions.length / 2 },
+            end: { x: o.position[0] + Math.cos(o.rotation[1]) * o.dimensions.length / 2, y: o.position[2] + Math.sin(o.rotation[1]) * o.dimensions.length / 2 },
+            thickness: o.dimensions.thickness,
+            type: o.isExterior ? 'exterior' : 'interior',
+          })) || [],
+          rooms: recent.rooms || [],
+        });
+        if (result) setSyncStatus('ok');
+        else setSyncStatus('error');
+      } catch (e) {
+        setSyncStatus('error');
+      }
+    }, 2000);
+    return () => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    };
+  }, [library, cloudUser]);
+
   // ============================================
   // UPLOAD - FILE
   // ============================================
@@ -361,7 +414,14 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
             </div>
             <div>
               <h1 className="font-bold text-white">Biblioteca de Plantas</h1>
-              <p className="text-slate-400 text-sm">{library.length} plantas salvas</p>
+              <p className="text-slate-400 text-sm">
+                {library.length} plantas salvas
+                {cloudUser && (
+                  <span className="ml-2 text-emerald-400">
+                    · ☁ {syncStatus === 'syncing' ? 'sincronizando...' : syncStatus === 'ok' ? 'sincronizado' : syncStatus === 'error' ? 'erro sync' : 'sincronizado'}
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           {onClose && (

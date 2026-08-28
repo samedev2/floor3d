@@ -13,6 +13,7 @@
     "@react-three/drei": "^9.92.7",
     "@react-three/fiber": "^8.15.12",
     "@react-three/xr": "^6.6.30",
+    "@supabase/supabase-js": "^2.112.4",
     "@thatopen/components": "^3.4.8",
     "ar.js": "^2.2.2",
     "lucide-react": "^0.309.0",

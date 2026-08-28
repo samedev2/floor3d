@@ -14,6 +14,7 @@ import {
   Bot,
   Key,
   Settings as SettingsIcon,
+  Cloud,
 } from 'lucide-react';
 import { FloorPlan3DViewer } from './components/FloorPlan3DViewer';
 import { PermissionHandler } from './components/PermissionHandler';
@@ -22,6 +23,7 @@ import { GaussianSplattingViewer } from './components/GaussianSplattingViewer';
 import { PreciseBlockoutEditor } from './components/PreciseBlockoutEditor';
 import { GeminiChatPanel } from './components/GeminiChatPanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { AuthScreen } from './components/AuthScreen';
 import { useStore } from './store';
 import { axisLineParser } from './floorplan/axisLineParser';
 import { simpleFallbackParser } from './floorplan/simpleFallbackParser';
@@ -30,7 +32,7 @@ import { LAYERS } from './floorplan/typesExtensions';
 import type { RoomData } from './floorplan/typesExtensions';
 import './App.css';
 
-type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat' | 'settings';
+type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat' | 'settings' | 'auth';
 
 interface ModeCard {
   key: ViewKey;
@@ -380,6 +382,7 @@ export default function App() {
   if (view === 'gaussian') return <GaussianSplattingViewer onClose={() => setView(null)} />;
   if (view === 'precise') return <PreciseBlockoutEditor onClose={() => setView(null)} />;
   if (view === 'settings') return <SettingsPanel onClose={() => setView(null)} />;
+  if (view === 'auth') return <AuthScreen onClose={() => setView(null)} />;
   if (view === 'aiChat') {
     const img = pendingImage || (typeof window !== 'undefined' ? window.localStorage.getItem('floorvision_last_image') : null);
     if (img) {
@@ -455,9 +458,16 @@ export default function App() {
         </div>
         <div className="flex items-center gap-1">
           <button
+            onClick={() => setView('auth')}
+            className="p-2 rounded-lg hover:bg-slate-800 transition-colors"
+            title="Conta Supabase"
+          >
+            <Cloud className="w-5 h-5 text-slate-400" />
+          </button>
+          <button
             onClick={() => setView('settings')}
             className="p-2 rounded-lg hover:bg-slate-800 transition-colors relative"
-            title="Configurações"
+            title="Configurações Gemini"
           >
             <SettingsIcon className="w-5 h-5 text-slate-400" />
             {aiEnabled && (
