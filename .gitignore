@@ -59,3 +59,7 @@ desktop.ini
 .smoketest/
 *.bak
 _test-*.ts.bak
+
+# Trash folder (arquivos removidos)
+.trash/
+src/.trash
