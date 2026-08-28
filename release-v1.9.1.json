@@ -1,0 +1,7 @@
+{
+  "tag_name": "v1.9.1",
+  "name": "Floor3D v1.9.1 - Permissoes Lazy",
+  "body": "## v1.9.1 - Permissoes Lazy\n\n### O que mudou\n- **Tela de boas-vindas cacheada**: aparece so na primeira vez. Apos o usuario tocar em \"Comecar\", o app pula direto para o menu nas proximas aberturas\n- **Camera NAO e mais solicitada no inicio do app**\n- **Permissoes sob demanda**: cada permissao e pedida apenas quando o usuario tenta usar a feature que precisa dela\n- Novo helper `src/lib/permissions.ts` com `requestCameraPermission()` (lazy)\n\n### Como funciona agora\n1. Primeira vez que abre: aparece a tela de boas-vindas com os 3 modulos (Importar, Visualizador, Biblioteca)\n2. Apos tocar \"Comecar\": cache `floorvision_permissions_accepted=true` em localStorage\n3. Proximas aberturas: vai direto pro menu principal\n4. Camera so e pedida quando o usuario tocar no botao de camera (ex: ao importar foto)\n\n### Build\n- APK: ~11 MB\n- Capacitor Android (nativo)\n- Funciona 100% offline (parser axis-line + fallback simples)\n- Gemini AI como parser primario (requer API key nas Configuracoes)",
+  "draft": false,
+  "prerelease": false
+}
