@@ -250,6 +250,10 @@ export class OpenCVArchitecturalParser {
   // ============================================
   // PRÉ-PROCESSAMENTO
   // Filtra cor (HSV) → Blur → Canny → Close
+  // Otimizado para plantas arquitetônicas:
+  // - Vermelho mais agressivo (cobre variações como #C00, #B22, etc)
+  // - Bordas mais espessas via dilatação maior
+  // - Fecha gaps em paredes tracejadas
   // ============================================
   private preprocessImage(cv: any, src: any, W: number, H: number, onProgress?: (msg: string) => void): any | null {
     // 1. Converte para HSV
@@ -258,51 +262,71 @@ export class OpenCVArchitecturalParser {
     cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
     cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
 
-    // 2. Máscara para vermelho (HSV: H=0-10 ou 170-180, S>100, V>50)
+    // 2. MÁSCARA VERMELHA AGRESSIVA
+    //    H: 0-15 (laranja-avermelhado) e 165-180 (rosa-avermelhado)
+    //    S: >60 (saturação mínima baixa para pegar vermelho desbotado)
+    //    V: >40 (permite vermelho escuro)
     const maskRed1 = new cv.Mat();
     const maskRed2 = new cv.Mat();
     const maskRed = new cv.Mat();
-    cv.inRange(hsv, new cv.Scalar(0, 100, 50, 0), new cv.Scalar(10, 255, 255, 0), maskRed1);
-    cv.inRange(hsv, new cv.Scalar(170, 100, 50, 0), new cv.Scalar(180, 255, 255, 0), maskRed2);
+    cv.inRange(hsv, new cv.Scalar(0, 60, 40, 0), new cv.Scalar(15, 255, 255, 0), maskRed1);
+    cv.inRange(hsv, new cv.Scalar(165, 60, 40, 0), new cv.Scalar(180, 255, 255, 0), maskRed2);
     cv.add(maskRed1, maskRed2, maskRed);
 
-    // 3. Máscara para cinza-escuro (preto)
-    const maskDark = new cv.Mat();
-    cv.inRange(hsv, new cv.Scalar(0, 0, 0, 0), new cv.Scalar(180, 255, 80, 0), maskDark);
+    // 3. MÁSCARA VERMELHO ESCURO (RGB direto, para vermelhos muito escuros)
+    //    Pega tons de vermelho que o HSV pode perder
+    const rgb = new cv.Mat();
+    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+    const maskRedDark = new cv.Mat();
+    cv.inRange(rgb, new cv.Scalar(80, 0, 0, 0), new cv.Scalar(255, 100, 100, 0), maskRedDark);
+    cv.add(maskRed, maskRedDark, maskRed);
+    rgb.delete();
+    maskRed1.delete(); maskRed2.delete(); maskRedDark.delete();
 
-    // 4. Combina as máscaras
+    // 4. MÁSCARA PRETO/CINZA (linhas pretas de paredes)
+    const maskDark = new cv.Mat();
+    cv.inRange(hsv, new cv.Scalar(0, 0, 0, 0), new cv.Scalar(180, 255, 100, 0), maskDark);
+
+    // 5. Combina as máscaras
     const mask = new cv.Mat();
     cv.add(maskRed, maskDark, mask);
-    maskRed1.delete(); maskRed2.delete(); maskRed.delete(); maskDark.delete();
+    maskRed.delete(); maskDark.delete();
 
-    // 5. Corta margens (remove título no topo)
+    // 6. Corta margens (remove título no topo)
     const marginTop = Math.floor(H * this.MARGIN_TOP_FRACTION);
-    void Math.floor(W * this.MARGIN_LEFT_FRACTION); // marginLeft reserved for future use
+    void Math.floor(W * this.MARGIN_LEFT_FRACTION);
     if (marginTop > 0) {
-      const roi = mask.roi(new cv.Rect(0, marginTop, W, H - marginTop));
-      mask.delete();
-      // Restaura em mask
-      const fullMask = new cv.Mat(H, W, cv.CV_8UC1, new cv.Scalar(0, 0, 0, 0));
-      fullMask.copyTo(fullMask, new cv.Mat());
       const dst = new cv.Mat();
       dst.create(H, W, cv.CV_8UC1);
       dst.setTo(new cv.Scalar(0, 0, 0, 0));
+      const roi = mask.roi(new cv.Rect(0, marginTop, W, H - marginTop));
       roi.copyTo(dst.roi(new cv.Rect(0, marginTop, W, H - marginTop)));
       mask.delete();
+      roi.delete();
+      hsv.delete();
       return dst;
     }
 
-    // 6. GaussianBlur para suavizar
+    // 6. MORPHOLOGICAL CLOSE na máscara ANTES do Canny
+    //    Fecha gaps em paredes tracejadas (ex: porta ou cotagem quebrando a parede)
+    onProgress?.('Morphological close (fecha quebras)...');
+    const closeKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+    const closed = new cv.Mat();
+    cv.morphologyEx(mask, closed, cv.MORPH_CLOSE, closeKernel, new cv.Point(-1, -1), 2, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+    closeKernel.delete();
+
+    // 7. GaussianBlur para suavizar
     onProgress?.('Aplicando GaussianBlur...');
     const blurred = new cv.Mat();
-    cv.GaussianBlur(mask, blurred, new cv.Size(3, 3), 0, 0, cv.BORDER_DEFAULT);
+    cv.GaussianBlur(closed, blurred, new cv.Size(3, 3), 0, 0, cv.BORDER_DEFAULT);
+    closed.delete();
 
-    // 7. Canny edge detection
+    // 8. Canny edge detection (threshold mais sensível)
     onProgress?.('Aplicando Canny edge...');
     const edges = new cv.Mat();
-    cv.Canny(blurred, edges, 50, 150, 3, false);
+    cv.Canny(blurred, edges, 30, 100, 3, false);
 
-    // 8. Dilata para conectar quebras
+    // 9. DILATAÇÃO MAIOR para conectar quebras
     onProgress?.('Dilatando para conectar quebras...');
     const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
     const dilated = new cv.Mat();
@@ -324,15 +348,18 @@ export class OpenCVArchitecturalParser {
   // ============================================
   private detectLinesHough(cv: any, edges: any, W: number, H: number): Line[] {
     const lines = new cv.Mat();
-    // Parâmetros ajustados para plantas arquitetônicas
+    // Parâmetros otimizados para plantas arquitetônicas:
+    // - threshold 30 (era 50): mais sensível, detecta linhas curtas
+    // - minLineLength 3% (era 4%): aceita paredes menores
+    // - maxLineGap 3% (era 2%): conecta quebras maiores em paredes tracejadas
     cv.HoughLinesP(
       edges,
       lines,
       1,                    // rho: 1 pixel
       Math.PI / 180,        // theta: 1 grau
-      50,                   // threshold: mínimo de votos
-      Math.min(W, H) * 0.04, // minLineLength: 4% da menor dimensão
-      Math.min(W, H) * 0.02, // maxLineGap: 2% da menor dimensão
+      30,                   // threshold: mínimo de votos (era 50)
+      Math.min(W, H) * 0.03, // minLineLength: 3% da menor dimensão
+      Math.min(W, H) * 0.03  // maxLineGap: 3% (era 2%)
     );
 
     const result: Line[] = [];
