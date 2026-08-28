@@ -1,183 +1,94 @@
-import { useState, useCallback } from 'react';
-import { Camera, FolderOpen, MapPin, Shield, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Sparkles } from 'lucide-react';
 
 interface PermissionHandlerProps {
   onPermissionsGranted: () => void;
   onSkip: () => void;
 }
 
-export function PermissionHandler({ onPermissionsGranted, onSkip: _onSkip }: PermissionHandlerProps) {
-  const [showDenied, setShowDenied] = useState(false);
-  const [requesting, setRequesting] = useState(false);
+const STORAGE_KEY = 'floorvision_permissions_accepted';
 
-  const requestCameraPermission = useCallback(async () => {
-    setRequesting(true);
-    
-    try {
-      // Import Camera plugin - it handles permissions internally
-      const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
-      
-      // This will trigger permission prompt if needed
-      await Camera.getPhoto({
-        quality: 10, // Low quality for permission test
-        allowEditing: false,
-        resultType: CameraResultType.DataUrl,
-        source: CameraSource.Camera,
-      });
-      
-      // If we got here, permission was granted
+/**
+ * Tela de boas-vindas leve.
+ * NAO solicita permissões no início (camera só quando precisar).
+ * Só aparece uma vez — depois disso o app vai direto para o menu.
+ */
+export function PermissionHandler({ onPermissionsGranted }: PermissionHandlerProps) {
+  const [visible, setVisible] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Verifica cache - se já aceitou/skipou antes, pula direto
+    const accepted = localStorage.getItem(STORAGE_KEY);
+    if (accepted === 'true') {
       onPermissionsGranted();
-    } catch (err: any) {
-      console.error('Camera permission error:', err);
-      
-      // Check if permission was denied
-      if (err.message?.includes('denied') || err.message?.includes('Permission')) {
-        setShowDenied(true);
-      } else {
-        // Other error, might be available anyway
-        onPermissionsGranted();
-      }
-    } finally {
-      setRequesting(false);
+    } else {
+      setVisible(true);
     }
+    setLoading(false);
   }, [onPermissionsGranted]);
 
-  const proceedWithoutPermissions = useCallback(() => {
+  const handleAccept = useCallback(() => {
+    localStorage.setItem(STORAGE_KEY, 'true');
+    setVisible(false);
     onPermissionsGranted();
   }, [onPermissionsGranted]);
 
-  if (showDenied) {
-    return (
-      <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center p-6">
-        <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mb-6">
-          <AlertCircle className="w-10 h-10 text-red-500" />
-        </div>
-        
-        <h2 className="text-2xl font-bold text-white mb-4 text-center">
-          Permissão Negada
-        </h2>
-        
-        <p className="text-slate-400 text-center mb-6 max-w-sm">
-          A câmera precisa de permissão para funcionar. Você pode tentar novamente ou continuar sem AR.
-        </p>
-        
-        <div className="space-y-3 w-full max-w-sm">
-          <button
-            onClick={() => {
-              setShowDenied(false);
-              requestCameraPermission();
-            }}
-            className="w-full py-4 bg-primary rounded-xl text-white font-bold text-lg"
-          >
-            Tentar Novamente
-          </button>
-          
-          <button
-            onClick={proceedWithoutPermissions}
-            className="w-full py-3 text-slate-400 text-sm"
-          >
-            Continuar sem Câmera
-          </button>
-        </div>
-        
-        <p className="text-slate-500 text-sm mt-6 text-center">
-          Para dar permissão manualmente:<br/>
-          Configurações → Apps → FloorVision → Permissões
-        </p>
-      </div>
-    );
-  }
+  if (loading || !visible) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-900 flex flex-col">
-      {/* Header */}
-      <div className="p-6 bg-slate-800">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center">
-            <Shield className="w-6 h-6 text-primary" />
+    <div className="fixed inset-0 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-6 z-50">
+      <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30 mb-6">
+        <Sparkles className="w-10 h-10 text-white" />
+      </div>
+
+      <h1 className="text-3xl font-bold text-white mb-2 text-center">
+        Floor3D
+      </h1>
+      <p className="text-slate-400 text-center mb-8 max-w-sm">
+        Transforme plantas 2D em modelos 3D com inteligência artificial
+      </p>
+
+      <div className="w-full max-w-sm space-y-3 mb-8">
+        <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-xl">
+          <div className="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl">
+            📐
           </div>
-          <div>
-            <h2 className="text-xl font-bold text-white">Bem-vindo ao FloorVision</h2>
-            <p className="text-slate-400 text-sm">Configure para começar</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-white text-sm font-semibold">Importar planta 2D</p>
+            <p className="text-slate-400 text-xs">PNG, JPG ou PDF</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-xl">
+          <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl">
+            🎲
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-white text-sm font-semibold">Visualizar 3D em 360°</p>
+            <p className="text-slate-400 text-xs">Gire, explore, entenda o espaço</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-xl">
+          <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400 text-xl">
+            📁
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-white text-sm font-semibold">Salvar em pastas</p>
+            <p className="text-slate-400 text-xs">Organize suas plantas por tipo</p>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 p-6">
-        <p className="text-slate-400 mb-6">
-          Para escanear plantas e usar AR, precisamos de algumas permissões:
-        </p>
+      <button
+        onClick={handleAccept}
+        className="w-full max-w-sm py-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 rounded-2xl text-white font-bold text-lg shadow-lg shadow-cyan-500/20 transition-all active:scale-95"
+      >
+        Começar
+      </button>
 
-        {/* Camera */}
-        <div className="flex items-center gap-4 p-4 bg-slate-800 rounded-xl mb-4">
-          <div className="w-12 h-12 rounded-xl bg-slate-700 flex items-center justify-center">
-            <Camera className="w-6 h-6 text-primary" />
-          </div>
-          <div className="flex-1">
-            <p className="text-white font-medium">Câmera</p>
-            <p className="text-slate-400 text-sm">Escanear plantas em tempo real</p>
-          </div>
-        </div>
-
-        {/* Storage */}
-        <div className="flex items-center gap-4 p-4 bg-slate-800 rounded-xl mb-4">
-          <div className="w-12 h-12 rounded-xl bg-slate-700 flex items-center justify-center">
-            <FolderOpen className="w-6 h-6 text-accent" />
-          </div>
-          <div className="flex-1">
-            <p className="text-white font-medium">Armazenamento</p>
-            <p className="text-slate-400 text-sm">Salvar plantas e modelos 3D</p>
-          </div>
-        </div>
-
-        {/* Location */}
-        <div className="flex items-center gap-4 p-4 bg-slate-800 rounded-xl mb-6">
-          <div className="w-12 h-12 rounded-xl bg-slate-700 flex items-center justify-center">
-            <MapPin className="w-6 h-6 text-yellow-500" />
-          </div>
-          <div className="flex-1">
-            <p className="text-white font-medium">Localização</p>
-            <p className="text-slate-400 text-sm">Marcar plantas por local (opcional)</p>
-          </div>
-        </div>
-
-        {/* Info box */}
-        <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700">
-          <p className="text-slate-400 text-sm">
-            💡 As permissões ficam ativas enquanto o app estiver aberto. 
-            Você pode gerenciá-las a qualquer momento nas configurações do celular.
-          </p>
-        </div>
-      </div>
-
-      {/* Action buttons */}
-      <div className="p-6 bg-slate-800 space-y-3">
-        <button
-          onClick={requestCameraPermission}
-          disabled={requesting}
-          className="w-full py-4 bg-primary rounded-xl text-white font-bold text-lg flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {requesting ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              <span>Solicitando...</span>
-            </>
-          ) : (
-            <>
-              <Camera className="w-6 h-6" />
-              <span>Conceder Permissões</span>
-            </>
-          )}
-        </button>
-        
-        <button
-          onClick={proceedWithoutPermissions}
-          className="w-full py-3 text-slate-400 text-sm"
-        >
-          Continuar sem permissões (AR desabilitado)
-        </button>
-      </div>
+      <p className="text-slate-500 text-xs text-center mt-4 max-w-xs">
+        Câmera e outras permissões serão solicitadas apenas quando você usar a função que precisa delas
+      </p>
     </div>
   );
 }
