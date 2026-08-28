@@ -133,18 +133,38 @@ export class OpenCVArchitecturalParser {
         return this.emptyResult(W, H, 0, 0, 0, 0, 0, warnings, errors);
       }
 
-      // 3. Detecta linhas com HoughLinesP
-      onProgress?.('Detectando linhas (HoughLinesP)...');
-      const rawLines = this.detectLinesHough(cv, processed, W, H);
+      // 3. TENTATIVA 1: Detecta linhas com HoughLinesP na máscara de cor
+      onProgress?.('Detectando linhas (HoughLinesP) na máscara de cor...');
+      let rawLines = this.detectLinesHough(cv, processed, W, H);
 
-      // 4. Filtra linhas (orientação 0°/90°, comprimento mínimo)
+      // 4. TENTATIVA 2: Se encontrou poucas linhas, detecta na imagem em grayscale
+      //    (pega paredes pretas, traços a lápis, etc)
+      if (rawLines.length < 4) {
+        onProgress?.('Poucas linhas. Tentando grayscale...');
+        const grayLines = this.detectLinesGrayscale(cv, src, W, H);
+        if (grayLines.length > rawLines.length) {
+          rawLines = grayLines;
+        }
+      }
+
+      // 5. TENTATIVA 3: LSD Line Segment Detector (pega segmentos curtos)
+      if (rawLines.length < 4) {
+        onProgress?.('Poucas linhas. Tentando LSD...');
+        const lsdLines = this.detectLinesLSD(cv, processed, W, H);
+        if (lsdLines.length > rawLines.length) {
+          rawLines = lsdLines;
+        }
+      }
+
+      // 6. Filtra linhas (orientação 0°/90°, comprimento mínimo)
       onProgress?.(`Filtrando ${rawLines.length} linhas...`);
-      const wallLines = this.filterAndSnapLines(rawLines, W, H);
-      const linesTime = Date.now() - startTime;
+      let wallLines = this.filterAndSnapLines(rawLines, W, H);
 
+      // 7. FALLBACK: se ainda tem < 4 paredes, gera estrutura básica do tamanho da imagem
       if (wallLines.length < 4) {
-        warnings.push(`Apenas ${wallLines.length} paredes detectadas.`);
-        return this.emptyResult(W, H, rawLines.length, wallLines.length, 0, 0, linesTime, warnings, errors);
+        onProgress?.(`Poucas paredes (${wallLines.length}). Gerando estrutura básica...`);
+        warnings.push(`Apenas ${wallLines.length} paredes detectadas, usando estrutura padrão.`);
+        wallLines = this.generateFallbackStructure(W, H, wallLines);
       }
 
       // 5. Constrói paredes + vértices
@@ -378,6 +398,130 @@ export class OpenCVArchitecturalParser {
     }
     lines.delete();
     return result;
+  }
+
+  // ============================================
+  // HOUGHLINESP em GRAYSCALE
+  // Detecta linhas na imagem em tons de cinza (pega paredes pretas, traços)
+  // ============================================
+  private detectLinesGrayscale(cv: any, src: any, W: number, H: number): Line[] {
+    // Converte para grayscale
+    const gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    // Blur mais agressivo para suavizar textura de fundo
+    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+
+    // OTSU threshold (automático, ignora fundo texturizado)
+    const binary = new cv.Mat();
+    cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+    // Morphological CLOSE fecha gaps em paredes
+    const closeKernel = cv.Mat.ones(3, 3, cv.CV_8U);
+    const closed = new cv.Mat();
+    cv.morphologyEx(binary, closed, cv.MORPH_CLOSE, closeKernel, new cv.Point(-1, -1), 2, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+    closeKernel.delete();
+
+    // Dilata para conectar quebras
+    const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
+    const dilated = new cv.Mat();
+    cv.dilate(closed, dilated, kernel, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+    kernel.delete();
+    gray.delete();
+    binary.delete();
+    closed.delete();
+
+    // HoughLinesP com parâmetros muito sensíveis
+    const lines = new cv.Mat();
+    cv.HoughLinesP(
+      dilated,
+      lines,
+      1,
+      Math.PI / 180,
+      20,  // threshold muito baixo
+      Math.min(W, H) * 0.02, // minLineLength: 2%
+      Math.min(W, H) * 0.04  // maxLineGap: 4%
+    );
+    dilated.delete();
+
+    const result: Line[] = [];
+    for (let i = 0; i < lines.rows; i++) {
+      const x1 = lines.data32S[i * 4];
+      const y1 = lines.data32S[i * 4 + 1];
+      const x2 = lines.data32S[i * 4 + 2];
+      const y2 = lines.data32S[i * 4 + 3];
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      result.push({ x1, y1, x2, y2, length, angle, orientation: 'horizontal' });
+    }
+    lines.delete();
+    return result;
+  }
+
+  // ============================================
+  // LSD Line Segment Detector
+  // Detecta segmentos de linha curtos (pega detalhes)
+  // ============================================
+  private detectLinesLSD(cv: any, processed: any, _W: number, _H: number): Line[] {
+    try {
+      // LSD só está disponível em algumas builds do OpenCV.js
+      if (typeof cv.LineSegmentDetector === 'undefined') {
+        return [];
+      }
+      const lsd = cv.LineSegmentDetector();
+      const lines = new cv.Mat();
+      lsd.detect(processed, lines);
+
+      const result: Line[] = [];
+      for (let i = 0; i < lines.rows; i++) {
+        const x1 = lines.data32S[i * 4];
+        const y1 = lines.data32S[i * 4 + 1];
+        const x2 = lines.data32S[i * 4 + 2];
+        const y2 = lines.data32S[i * 4 + 3];
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        if (length > 5) { // ignora ruído muito pequeno
+          result.push({ x1, y1, x2, y2, length, angle, orientation: 'horizontal' });
+        }
+      }
+      lines.delete();
+      return result;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // ============================================
+  // FALLBACK: estrutura básica quando não detecta paredes suficientes
+  // Gera um retângulo do tamanho da imagem com algumas subdivisões
+  // ============================================
+  private generateFallbackStructure(W: number, H: number, existing: Line[]): Line[] {
+    // Margens internas (não usar pixels das bordas)
+    const margin = Math.min(W, H) * 0.05;
+    const x1 = margin;
+    const y1 = margin;
+    const x2 = W - margin;
+    const y2 = H - margin;
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+
+    const fallback: Line[] = [
+      // Perímetro
+      { x1: x1, y1: y1, x2: x2, y2: y1, length: x2 - x1, angle: 0, orientation: 'horizontal' },
+      { x1: x1, y1: y2, x2: x2, y2: y2, length: x2 - x1, angle: 0, orientation: 'horizontal' },
+      { x1: x1, y1: y1, x2: x1, y2: y2, length: y2 - y1, angle: 90, orientation: 'vertical' },
+      { x1: x2, y1: y1, x2: x2, y2: y2, length: y2 - y1, angle: 90, orientation: 'vertical' },
+      // Divisões internas (cria 4 ambientes)
+      { x1: x1, y1: midY, x2: x2, y2: midY, length: x2 - x1, angle: 0, orientation: 'horizontal' },
+      { x1: midX, y1: y1, x2: midX, y2: y2, length: y2 - y1, angle: 90, orientation: 'vertical' },
+    ];
+
+    // Combina fallback com o que já foi detectado
+    return [...existing, ...fallback];
   }
 
   // ============================================
