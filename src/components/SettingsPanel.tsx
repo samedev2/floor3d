@@ -30,10 +30,13 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     setTestResult(null);
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey.trim()}`,
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-goog-api-key': apiKey.trim(),
+          },
           body: JSON.stringify({
             contents: [{ parts: [{ text: 'Responda apenas OK' }] }],
           }),

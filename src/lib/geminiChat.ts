@@ -9,7 +9,7 @@
  * API key is read from localStorage (user-configurable in Settings)
  */
 
-const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
 const STORAGE_KEY = 'floorvision_gemini_key';
 
 export interface Wall2D {
@@ -242,9 +242,12 @@ export class GeminiChat {
     const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
-      const response = await fetch(`${API_URL}?key=${apiKey}`, {
+      const response = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-goog-api-key': apiKey,
+        },
         signal: controller.signal,
         body: JSON.stringify({
           contents: this.history,
@@ -263,10 +266,13 @@ export class GeminiChat {
         const errData = await response.json().catch(() => ({}));
         const msg = errData.error?.message || `HTTP ${response.status}`;
         if (response.status === 400) {
-          throw new Error('Chave da API inválida. Configure em Configurações.');
+          throw new Error('Chave da API inválida. Gere uma nova em aistudio.google.com/apikey');
         }
         if (response.status === 429) {
-          throw new Error('Limite de uso excedido. Tente em alguns minutos.');
+          throw new Error('Limite mensal do projeto esgotado. Aumente em ai.studio/spend ou crie projeto novo.');
+        }
+        if (response.status === 404) {
+          throw new Error('Modelo não disponível. Tente criar uma nova chave.');
         }
         throw new Error(msg);
       }
