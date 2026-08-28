@@ -28,7 +28,25 @@ interface LoginGateProps {
   version?: string;
 }
 
-type Mode = 'login' | 'config' | 'forgot';
+type Mode = 'login' | 'config' | 'forgot' | 'demo';
+
+// Flag global de demo (so persistida por sessão)
+const DEMO_KEY = 'floorvision_demo_mode';
+
+export function isDemoMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.sessionStorage.getItem(DEMO_KEY) === 'true';
+}
+
+export function exitDemoMode() {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.removeItem(DEMO_KEY);
+}
+
+export function enterDemoMode() {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.setItem(DEMO_KEY, 'true');
+}
 
 export function LoginGate({ onAuthenticated, version = 'v2.0.1' }: LoginGateProps) {
   const [mode, setMode] = useState<Mode>('login');
@@ -58,6 +76,17 @@ export function LoginGate({ onAuthenticated, version = 'v2.0.1' }: LoginGateProp
     let mounted = true;
     (async () => {
       try {
+        // Se já está em modo demo, vai direto pro app
+        if (isDemoMode()) {
+          const demoUser = {
+            id: 'demo-user',
+            email: 'demo@floor3d.local',
+            isDemo: true,
+          };
+          if (mounted) onAuthenticated(demoUser);
+          return;
+        }
+
         const u = await getCurrentUser();
         if (!mounted) return;
         if (u) {
@@ -87,6 +116,17 @@ export function LoginGate({ onAuthenticated, version = 'v2.0.1' }: LoginGateProp
   // ============================================
   // LOGIN
   // ============================================
+  function handleDemoLogin() {
+    enterDemoMode();
+    const demoUser = {
+      id: 'demo-user',
+      email: 'demo@floor3d.local',
+      isDemo: true,
+    };
+    setInfo('Entrando no modo demo...');
+    setTimeout(() => onAuthenticated(demoUser), 400);
+  }
+
   async function handleLogin() {
     if (!email || !password) {
       setError('Preencha email e senha');
@@ -306,6 +346,56 @@ export function LoginGate({ onAuthenticated, version = 'v2.0.1' }: LoginGateProp
               <p className="text-[10px] text-slate-500 text-center mt-4">
                 Sem conta? Procure o administrador — usuários são criados no Supabase.
               </p>
+
+              {/* === MODO DEMO === */}
+              <div className="mt-5 pt-5 border-t border-dashed border-slate-700/50">
+                <button
+                  onClick={handleDemoLogin}
+                  className="w-full py-2.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/40 rounded-lg text-amber-200 text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-95"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Entrar como Demo
+                </button>
+                <p className="text-[10px] text-amber-300/60 text-center mt-2 leading-relaxed">
+                  Modo demonstração local — sem login, sem nuvem.<br/>
+                  Ideal para testes e apresentações. Sessão expira ao fechar o app.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* === MODO DEMO PURO (sem Supabase configurado) === */}
+          {mode === 'demo' && (
+            <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-500/30 rounded-2xl p-6 shadow-xl">
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles className="w-5 h-5 text-amber-400" />
+                <h2 className="text-lg font-bold text-amber-200">Modo Demo</h2>
+              </div>
+              <p className="text-xs text-amber-300/80 mb-5">
+                Acesse o app sem login. Suas plantas ficam só no dispositivo — nada é enviado para a nuvem.
+              </p>
+              <button
+                onClick={handleDemoLogin}
+                className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 rounded-lg text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all active:scale-95"
+              >
+                <Sparkles className="w-4 h-4" />
+                Entrar no modo Demo
+              </button>
+              <button
+                onClick={() => { setMode('config'); setError(null); setInfo(null); }}
+                className="w-full mt-2 py-2 text-slate-400 hover:text-white text-sm transition"
+              >
+                ← Configurar Supabase ao invés
+              </button>
+              <div className="mt-4 p-3 bg-slate-900/40 border border-amber-500/20 rounded-lg">
+                <p className="text-[10px] text-amber-200/70 leading-relaxed">
+                  <strong>Limitações do demo:</strong><br/>
+                  • Não sincroniza plantas com a nuvem<br/>
+                  • Sessão é local e expira ao fechar o app<br/>
+                  • Recursos de IA (Gemini) continuam funcionando normalmente<br/>
+                  • Bom pra mostrar a interface e fluxo sem precisar de servidor
+                </p>
+              </div>
             </div>
           )}
 
@@ -399,6 +489,20 @@ export function LoginGate({ onAuthenticated, version = 'v2.0.1' }: LoginGateProp
                   <strong>Onde conseguir?</strong> Acesse o painel do seu projeto em{' '}
                   <span className="text-cyan-400">supabase.com</span> → Settings → API.
                   A URL e a <strong>anon public</strong> key ficam lá.
+                </p>
+              </div>
+
+              {/* Botão pra pular e entrar como demo */}
+              <div className="mt-5 pt-5 border-t border-dashed border-slate-700/50">
+                <button
+                  onClick={handleDemoLogin}
+                  className="w-full py-2.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/40 rounded-lg text-amber-200 text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-95"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Pular e entrar como Demo
+                </button>
+                <p className="text-[10px] text-amber-300/60 text-center mt-2">
+                  Para testes e demos. Sessão local, sem nuvem.
                 </p>
               </div>
             </div>

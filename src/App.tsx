@@ -26,12 +26,12 @@ import { GeminiChatPanel } from './components/GeminiChatPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { AuthScreen } from './components/AuthScreen';
 import { MaterialEstimate } from './components/MaterialEstimate';
-import { LoginGate } from './components/LoginGate';
+import { LoginGate, isDemoMode, exitDemoMode } from './components/LoginGate';
 import { useStore } from './store';
 import { geminiChat, hasApiKey, type GeminiFloorPlan } from './lib/geminiChat';
 import { usePlantImport } from './lib/usePlantImport';
 import { planToModel3D, planToFloorPlan } from './lib/plantImportCore';
-import { Lock } from 'lucide-react';
+import { Lock, LogOut } from 'lucide-react';
 import './App.css';
 
 type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat' | 'settings' | 'auth' | 'materials';
@@ -106,7 +106,8 @@ const MODE_CARDS: ModeCard[] = [
 export default function App() {
   const [view, setView] = useState<ViewKey | null>(null);
   const [showPermissions, setShowPermissions] = useState(true);
-  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [authed, setAuthed] = useState<boolean | null>(() => isDemoMode() ? true : null);
+  const [isDemo, setIsDemo] = useState<boolean>(isDemoMode());
   const [aiEnabled, setAiEnabled] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
@@ -121,6 +122,20 @@ export default function App() {
   useEffect(() => {
     setAiEnabled(hasApiKey());
   }, [view]);
+
+  // Se entrar no app como demo, marca no state
+  function handleAuthenticated(user: any) {
+    setIsDemo(!!user?.isDemo);
+    setAuthed(true);
+  }
+
+  // Sair do demo (volta pro LoginGate)
+  function handleExitDemo() {
+    exitDemoMode();
+    setIsDemo(false);
+    setAuthed(false);
+    setView(null);
+  }
 
   // GATE: LoginGate aparece enquanto authed === null
   // Quando autentica, mostra o app (PermissionHandler → menu)
@@ -175,7 +190,7 @@ export default function App() {
   // Gate de autenticação — antes de TUDO
   // Se não tiver user logado, mostra tela de login profissional
   if (authed === false || authed === null) {
-    return <LoginGate onAuthenticated={() => setAuthed(true)} version="v2.1.0" />;
+    return <LoginGate onAuthenticated={handleAuthenticated} version="v2.1.1" />;
   }
 
   if (showPermissions) {
@@ -286,6 +301,17 @@ export default function App() {
               <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full" />
             )}
           </button>
+          {isDemo && (
+            <button
+              onClick={handleExitDemo}
+              className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 transition-colors flex items-center gap-1.5"
+              title="Sair do modo Demo"
+            >
+              <span className="w-1.5 h-1.5 bg-amber-400 rounded-full" />
+              <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">Demo</span>
+              <LogOut className="w-3 h-3 text-amber-300" />
+            </button>
+          )}
           {processedPlan && (
             <button
               onClick={handleReset}
