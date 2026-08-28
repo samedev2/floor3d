@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Edges } from '@react-three/drei';
-import { 
-  Upload, 
-  Box, 
-  Layers, 
-  X, 
+import {
+  Upload,
+  Box,
+  Layers,
+  X,
   Loader2,
   AlertTriangle,
   Trash2,
@@ -14,7 +14,9 @@ import {
   Database,
   Sparkles,
   ChevronRight,
-  Brain
+  Brain,
+  Plus, Folder as FolderIcon, Home,
+  ChevronLeft, Move,
 } from 'lucide-react';
 import {
   SemanticObject,
@@ -34,6 +36,14 @@ import {
 // ============================================
 // PLANT LIBRARY STORAGE
 // ============================================
+interface Folder {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  createdAt: string;
+}
+
 interface SavedPlant {
   id: string;
   name: string;
@@ -47,9 +57,11 @@ interface SavedPlant {
   totalArea: number;
   totalWalls: number;
   totalRooms: number;
+  folderId?: string | null; // null = raiz
 }
 
 const STORAGE_KEY = 'floorvision_plants';
+const FOLDERS_KEY = 'floorvision_folders';
 
 function loadLibrary(): SavedPlant[] {
   try {
@@ -70,6 +82,24 @@ function saveLibrary(plants: SavedPlant[]) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(plants));
   } catch (e) {
     console.error('Erro ao salvar biblioteca:', e);
+  }
+}
+
+function loadFolders(): Folder[] {
+  try {
+    const data = localStorage.getItem(FOLDERS_KEY);
+    if (!data) return [];
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+}
+
+function saveFolders(folders: Folder[]) {
+  try {
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
+  } catch (e) {
+    console.error('Erro ao salvar pastas:', e);
   }
 }
 
@@ -184,11 +214,15 @@ interface PlantLibraryProps {
 export function PlantLibrary({ onClose }: PlantLibraryProps) {
   const [view, setView] = useState<'library' | 'upload' | 'editor'>('library');
   const [library, setLibrary] = useState<SavedPlant[]>(loadLibrary());
+  const [folders, setFolders] = useState<Folder[]>(loadFolders());
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [currentPlant, setCurrentPlant] = useState<SavedPlant | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState('');
   const [uploadMode, setUploadMode] = useState<'file' | 'hand-drawn'>('file');
+  const [showNewFolderDialog, setShowNewFolderDialog] = useState(false);
+  const [movePlantFor, setMovePlantFor] = useState<string | null>(null);
   
   // Editor state
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -209,6 +243,47 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
   useEffect(() => {
     saveLibrary(library);
   }, [library]);
+
+  // Persist folders changes
+  useEffect(() => {
+    saveFolders(folders);
+  }, [folders]);
+
+  // Folder handlers
+  const createFolder = useCallback((name: string, icon = '📁', color = '#06B6D4') => {
+    const newFolder: Folder = {
+      id: `folder_${Date.now()}`,
+      name: name.trim(),
+      icon,
+      color,
+      createdAt: new Date().toISOString(),
+    };
+    setFolders(prev => [...prev, newFolder]);
+  }, []);
+
+  const deleteFolder = useCallback((id: string) => {
+    // Move plantas da pasta deletada para raiz
+    setLibrary(prev => prev.map(p =>
+      p.folderId === id ? { ...p, folderId: null } : p
+    ));
+    setFolders(prev => prev.filter(f => f.id !== id));
+    if (currentFolderId === id) setCurrentFolderId(null);
+  }, [currentFolderId]);
+
+  const movePlantToFolder = useCallback((plantId: string, folderId: string | null) => {
+    setLibrary(prev => prev.map(p =>
+      p.id === plantId ? { ...p, folderId, lastModified: new Date() } : p
+    ));
+    setMovePlantFor(null);
+  }, []);
+
+  // Plants filtradas pela pasta atual
+  const visiblePlants = currentFolderId
+    ? library.filter(p => p.folderId === currentFolderId)
+    : library.filter(p => !p.folderId);
+  const currentFolder = currentFolderId
+    ? folders.find(f => f.id === currentFolderId)
+    : null;
 
   // Supabase sync (background, se logado)
   const [cloudUser, setCloudUser] = useState<any>(null);
@@ -409,13 +484,25 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
         {/* Header */}
         <div className="flex items-center justify-between p-4 bg-slate-800/80 backdrop-blur border-b border-slate-700">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
-              <Database className="w-6 h-6 text-cyan-400" />
-            </div>
+            {currentFolderId ? (
+              <button
+                onClick={() => setCurrentFolderId(null)}
+                className="w-10 h-10 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-white"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
+                <Database className="w-6 h-6 text-cyan-400" />
+              </div>
+            )}
             <div>
-              <h1 className="font-bold text-white">Biblioteca de Plantas</h1>
+              <h1 className="font-bold text-white">
+                {currentFolder ? `${currentFolder.icon} ${currentFolder.name}` : 'Biblioteca de Plantas'}
+              </h1>
               <p className="text-slate-400 text-sm">
-                {library.length} plantas salvas
+                {visiblePlants.length} {visiblePlants.length === 1 ? 'planta' : 'plantas'}
+                {folders.length > 0 && !currentFolderId && ` · ${folders.length} ${folders.length === 1 ? 'pasta' : 'pastas'}`}
                 {cloudUser && (
                   <span className="ml-2 text-emerald-400">
                     · ☁ {syncStatus === 'syncing' ? 'sincronizando...' : syncStatus === 'ok' ? 'sincronizado' : syncStatus === 'error' ? 'erro sync' : 'sincronizado'}
@@ -444,7 +531,7 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
             <span>Enviar Arquivo</span>
             <span className="text-xs opacity-75">Auto-detectar</span>
           </button>
-          
+
           <button
             onClick={() => { setUploadMode('hand-drawn'); setView('upload'); }}
             className="p-4 bg-green-600 hover:bg-green-500 rounded-2xl text-white font-bold flex flex-col items-center gap-2 transition-colors"
@@ -458,10 +545,66 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
         {/* Saved plants */}
         <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-2xl mx-auto">
-            {library.length === 0 ? (
+            {/* Pastas (só na raiz) */}
+            {!currentFolderId && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-white font-bold text-sm flex items-center gap-2">
+                    <FolderIcon className="w-4 h-4" />
+                    Pastas
+                  </h2>
+                  <button
+                    onClick={() => setShowNewFolderDialog(true)}
+                    className="text-xs px-2 py-1 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-white flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Nova pasta
+                  </button>
+                </div>
+                {folders.length === 0 ? (
+                  <p className="text-slate-500 text-xs italic">Nenhuma pasta criada. Toque em "Nova pasta" para organizar.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {folders.map(folder => {
+                      const count = library.filter(p => p.folderId === folder.id).length;
+                      return (
+                        <div
+                          key={folder.id}
+                          className="group relative bg-slate-800/70 border border-slate-700 rounded-xl p-3 hover:border-cyan-500 transition-colors cursor-pointer"
+                          onClick={() => setCurrentFolderId(folder.id)}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-10 h-10 rounded-lg flex items-center justify-center text-2xl"
+                              style={{ backgroundColor: folder.color + '20' }}
+                            >
+                              {folder.icon}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white text-sm font-semibold truncate">{folder.name}</p>
+                              <p className="text-slate-400 text-xs">{count} {count === 1 ? 'planta' : 'plantas'}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); if (confirm(`Apagar pasta "${folder.name}"? As ${count} plantas voltarão para a raiz.`)) deleteFolder(folder.id); }}
+                            className="absolute top-1 right-1 p-1 opacity-0 group-hover:opacity-100 hover:bg-red-500/30 rounded text-red-400"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {visiblePlants.length === 0 ? (
               <div className="text-center py-12">
                 <Database className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-                <p className="text-slate-400">Nenhuma planta salva ainda</p>
+                <p className="text-slate-400">
+                  {currentFolderId ? 'Pasta vazia' : 'Nenhuma planta salva ainda'}
+                </p>
                 <p className="text-slate-500 text-sm mt-2">
                   Envie uma imagem ou carregue a planta desenhada à mão
                 </p>
@@ -470,9 +613,9 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
               <div className="space-y-3">
                 <h2 className="text-white font-bold text-sm flex items-center gap-2">
                   <Clock className="w-4 h-4" />
-                  Plantas Salvas
+                  {currentFolderId ? `Plantas em "${currentFolder?.name}"` : 'Plantas (raiz)'}
                 </h2>
-                {library.map(plant => (
+                {visiblePlants.map(plant => (
                   <div
                     key={plant.id}
                     className="bg-slate-800/70 border border-slate-700 rounded-2xl p-4 hover:border-cyan-500 transition-colors"
@@ -517,6 +660,15 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
                           <Edit3 className="w-3 h-3" />
                           Abrir
                         </button>
+                        {folders.length > 0 && (
+                          <button
+                            onClick={() => setMovePlantFor(plant.id)}
+                            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-white text-xs flex items-center gap-1"
+                          >
+                            <Move className="w-3 h-3" />
+                            Mover
+                          </button>
+                        )}
                         <button
                           onClick={() => deletePlant(plant.id)}
                           className="px-3 py-1.5 bg-slate-700 hover:bg-red-600 rounded-lg text-white text-xs flex items-center gap-1"
@@ -531,6 +683,26 @@ export function PlantLibrary({ onClose }: PlantLibraryProps) {
             )}
           </div>
         </div>
+
+        {/* Modal: Nova pasta */}
+        {showNewFolderDialog && (
+          <NewFolderDialog
+            onConfirm={(name, icon, color) => { createFolder(name, icon, color); setShowNewFolderDialog(false); }}
+            onCancel={() => setShowNewFolderDialog(false)}
+          />
+        )}
+
+        {/* Modal: Mover planta */}
+        {movePlantFor && (
+          <MovePlantDialog
+            folders={folders}
+            currentFolderId={
+              library.find(p => p.id === movePlantFor)?.folderId || null
+            }
+            onMove={(folderId) => movePlantToFolder(movePlantFor, folderId)}
+            onCancel={() => setMovePlantFor(null)}
+          />
+        )}
       </div>
     );
   }
@@ -1036,4 +1208,136 @@ async function generateFromDetection(
   }
 
   return { objects, rooms };
+}
+
+// ============================================
+// DIALOG: NOVA PASTA
+// ============================================
+function NewFolderDialog({ onConfirm, onCancel }: {
+  onConfirm: (name: string, icon: string, color: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [icon, setIcon] = useState('📁');
+  const [color, setColor] = useState('#06B6D4');
+  const icons = ['📁', '🏠', '🏢', '🏘️', '🏗️', '🏛️', '🏪', '🏫', '🏥', '🏨', '🏦', '🏡'];
+  const colors = ['#06B6D4', '#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#EF4444', '#6B7280'];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5 max-w-sm w-full">
+        <h3 className="text-lg font-bold text-white mb-4">Nova pasta</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-300 mb-1 block">Nome</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Ex: Residenciais, Apartamentos..."
+              autoFocus
+              className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-slate-300 mb-1 block">Ícone</label>
+            <div className="flex flex-wrap gap-1">
+              {icons.map(i => (
+                <button
+                  key={i}
+                  onClick={() => setIcon(i)}
+                  className={`w-9 h-9 rounded-lg text-xl flex items-center justify-center ${icon === i ? 'bg-cyan-500/30 ring-2 ring-cyan-500' : 'bg-slate-900 hover:bg-slate-700'}`}
+                >
+                  {i}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-slate-300 mb-1 block">Cor</label>
+            <div className="flex flex-wrap gap-2">
+              {colors.map(c => (
+                <button
+                  key={c}
+                  onClick={() => setColor(c)}
+                  className={`w-7 h-7 rounded-full ${color === c ? 'ring-2 ring-white scale-110' : ''}`}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white text-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => name.trim() && onConfirm(name, icon, color)}
+            disabled={!name.trim()}
+            className="flex-1 py-2 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 rounded-lg text-white text-sm font-semibold"
+          >
+            Criar pasta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// DIALOG: MOVER PLANTA
+// ============================================
+function MovePlantDialog({ folders, currentFolderId, onMove, onCancel }: {
+  folders: Folder[];
+  currentFolderId: string | null;
+  onMove: (folderId: string | null) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5 max-w-sm w-full">
+        <h3 className="text-lg font-bold text-white mb-4">Mover para pasta</h3>
+        <div className="space-y-2 max-h-80 overflow-y-auto">
+          <button
+            onClick={() => onMove(null)}
+            className={`w-full text-left p-3 rounded-xl border ${currentFolderId === null ? 'bg-cyan-500/20 border-cyan-500' : 'bg-slate-900 border-slate-700 hover:border-cyan-500'}`}
+          >
+            <div className="flex items-center gap-2">
+              <Home className="w-5 h-5 text-cyan-400" />
+              <div>
+                <p className="text-white text-sm font-semibold">Raiz (sem pasta)</p>
+                <p className="text-slate-400 text-xs">Volta para a página inicial</p>
+              </div>
+            </div>
+          </button>
+          {folders.map(f => (
+            <button
+              key={f.id}
+              onClick={() => onMove(f.id)}
+              className={`w-full text-left p-3 rounded-xl border ${currentFolderId === f.id ? 'bg-cyan-500/20 border-cyan-500' : 'bg-slate-900 border-slate-700 hover:border-cyan-500'}`}
+            >
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center text-xl"
+                  style={{ backgroundColor: f.color + '20' }}
+                >
+                  {f.icon}
+                </div>
+                <p className="text-white text-sm font-semibold">{f.name}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={onCancel}
+          className="w-full mt-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white text-sm"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
 }

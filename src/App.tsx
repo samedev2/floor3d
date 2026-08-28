@@ -30,6 +30,7 @@ import { simpleFallbackParser } from './floorplan/simpleFallbackParser';
 import { geminiChat, hasApiKey, type GeminiFloorPlan } from './lib/geminiChat';
 import { LAYERS } from './floorplan/typesExtensions';
 import type { RoomData } from './floorplan/typesExtensions';
+import { Lock } from 'lucide-react';
 import './App.css';
 
 type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat' | 'settings' | 'auth';
@@ -41,16 +42,18 @@ interface ModeCard {
   icon: React.ReactNode;
   gradient: string;
   border: string;
+  available: boolean;
 }
 
 const MODE_CARDS: ModeCard[] = [
   {
     key: 'aiChat',
     title: 'Chat com IA',
-    desc: 'Gemini analisa a planta',
+    desc: 'Em breve',
     icon: <Bot />,
-    gradient: 'from-pink-500/30 to-purple-600/10',
-    border: 'border-pink-500/40',
+    gradient: 'from-pink-500/20 to-purple-600/5',
+    border: 'border-pink-500/20',
+    available: false,
   },
   {
     key: 'viewer3D',
@@ -59,30 +62,34 @@ const MODE_CARDS: ModeCard[] = [
     icon: <Eye />,
     gradient: 'from-emerald-500/30 to-teal-600/10',
     border: 'border-emerald-500/40',
+    available: true,
   },
   {
     key: 'precise',
     title: 'Blockout Preciso',
-    desc: 'Paredes alinhadas em grade',
+    desc: 'Em breve',
     icon: <Grid3x3 />,
-    gradient: 'from-green-500/30 to-emerald-600/10',
-    border: 'border-green-500/40',
+    gradient: 'from-green-500/20 to-emerald-600/5',
+    border: 'border-green-500/20',
+    available: false,
   },
   {
     key: 'library',
     title: 'Biblioteca',
-    desc: 'Plantas salvas localmente',
+    desc: 'Plantas organizadas em pastas',
     icon: <Library />,
     gradient: 'from-cyan-500/30 to-blue-600/10',
     border: 'border-cyan-500/40',
+    available: true,
   },
   {
     key: 'gaussian',
     title: 'Gaussian Splatting',
-    desc: 'Imagem → PLY/GLB + Pin',
+    desc: 'Em breve',
     icon: <Sparkles />,
-    gradient: 'from-amber-500/30 to-orange-600/10',
-    border: 'border-amber-500/40',
+    gradient: 'from-amber-500/20 to-orange-600/5',
+    border: 'border-amber-500/20',
+    available: false,
   },
 ];
 
@@ -578,14 +585,18 @@ export default function App() {
                 {MODE_CARDS.map((card) => (
                   <button
                     key={card.key}
-                    onClick={() => setView(card.key)}
-                    className={`group relative overflow-hidden text-left rounded-2xl p-3.5 bg-gradient-to-br ${card.gradient} border ${card.border} hover:scale-[1.02] active:scale-[0.98] transition-all backdrop-blur-sm`}
+                    onClick={() => card.available && setView(card.key)}
+                    disabled={!card.available}
+                    className={`group relative overflow-hidden text-left rounded-2xl p-3.5 bg-gradient-to-br ${card.gradient} border ${card.border} ${card.available ? 'hover:scale-[1.02] active:scale-[0.98] cursor-pointer' : 'opacity-50 cursor-not-allowed'} transition-all backdrop-blur-sm`}
                   >
                     <div className="flex items-start justify-between mb-2">
                       <div className="w-9 h-9 rounded-xl bg-slate-900/60 backdrop-blur flex items-center justify-center text-white [&>svg]:w-5 [&>svg]:h-5">
                         {card.icon}
                       </div>
-                      {card.key === 'aiChat' && aiEnabled && (
+                      {!card.available && (
+                        <Lock className="w-3.5 h-3.5 text-slate-500" />
+                      )}
+                      {card.key === 'aiChat' && aiEnabled && card.available && (
                         <span className="px-1.5 py-0.5 bg-emerald-500/30 rounded-full text-[9px] font-bold text-emerald-300">IA</span>
                       )}
                     </div>
@@ -593,9 +604,11 @@ export default function App() {
                       {card.title}
                     </h3>
                     <p className="text-[11px] text-slate-300 leading-snug">
-                      {card.desc}
+                      {card.available ? card.desc : 'Em breve'}
                     </p>
-                    <ChevronRight className="absolute right-2 bottom-2 w-4 h-4 text-white/30 group-hover:text-white/70 group-hover:translate-x-0.5 transition-all" />
+                    {card.available && (
+                      <ChevronRight className="absolute right-2 bottom-2 w-4 h-4 text-white/30 group-hover:text-white/70 group-hover:translate-x-0.5 transition-all" />
+                    )}
                   </button>
                 ))}
               </div>

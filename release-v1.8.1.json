@@ -1,0 +1,1 @@
+{"tag_name":"v1.8.1","name":"v1.8.1 - Apenas login (sem cadastro)","body":"## Mudanca\n\nRemovida a tela de cadastro. Agora so aparece login. Os users devem ser criados diretamente no Supabase pelo admin (Authentication > Users > Add user).","draft":false,"prerelease":false}
