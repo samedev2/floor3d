@@ -11,19 +11,23 @@ import {
   Sparkle,
   Activity,
   ChevronRight,
+  Bot,
 } from 'lucide-react';
 import { FloorPlan3DViewer } from './components/FloorPlan3DViewer';
 import { PermissionHandler } from './components/PermissionHandler';
 import { PlantLibrary } from './components/PlantLibrary';
 import { GaussianSplattingViewer } from './components/GaussianSplattingViewer';
 import { PreciseBlockoutEditor } from './components/PreciseBlockoutEditor';
+import { GeminiChatPanel } from './components/GeminiChatPanel';
 import { useStore } from './store';
 import { axisLineParser } from './floorplan/axisLineParser';
+import { simpleFallbackParser } from './floorplan/simpleFallbackParser';
+import { geminiChat, type GeminiFloorPlan } from './lib/geminiChat';
 import { LAYERS } from './floorplan/typesExtensions';
 import type { RoomData } from './floorplan/typesExtensions';
 import './App.css';
 
-type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian';
+type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat';
 
 interface ModeCard {
   key: ViewKey;
@@ -35,6 +39,14 @@ interface ModeCard {
 }
 
 const MODE_CARDS: ModeCard[] = [
+  {
+    key: 'aiChat',
+    title: 'Chat com IA',
+    desc: 'Gemini analisa e refina a planta',
+    icon: <Bot />,
+    gradient: 'from-pink-500/30 to-purple-600/10',
+    border: 'border-pink-500/40',
+  },
   {
     key: 'viewer3D',
     title: 'Visualizador 360°',
@@ -64,8 +76,8 @@ const MODE_CARDS: ModeCard[] = [
     title: 'Gaussian Splatting',
     desc: 'Imagem → PLY/GLB + Pin Tracker',
     icon: <Sparkles />,
-    gradient: 'from-pink-500/30 to-rose-600/10',
-    border: 'border-pink-500/40',
+    gradient: 'from-amber-500/30 to-orange-600/10',
+    border: 'border-amber-500/40',
   },
 ];
 
@@ -76,6 +88,7 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const {
     setProcessedPlan,
@@ -85,7 +98,131 @@ export default function App() {
   } = useStore();
 
   // ============================================
-  // UPLOAD + DETECT WALLS (AxisLine parser)
+  // CONVERTE PLANO GEMINI → MODELO 3D
+  // ============================================
+  const applyGeminiPlan = useCallback((plan: GeminiFloorPlan) => {
+    const cx = plan.widthMeters / 2;
+    const cz = plan.heightMeters / 2;
+
+    const newObjects: any[] = [];
+    plan.walls.forEach((w, i) => {
+      const sx = w.start.x - cx;
+      const sz = w.start.y - cz;
+      const ex = w.end.x - cx;
+      const ez = w.end.y - cz;
+      const length = Math.sqrt((ex - sx) ** 2 + (ez - sz) ** 2);
+      if (length < 0.1) return; // pula paredes degeneradas
+      newObjects.push({
+        id: `wall_${i}`,
+        type: 'wall',
+        source_2d: `gemini_${i}`,
+        position: [(sx + ex) / 2, 1.4, (sz + ez) / 2],
+        rotation: [0, -Math.atan2(ez - sz, ex - sx), 0],
+        dimensions: { length, thickness: w.thickness, height: 2.80 },
+        confidence: 1.0,
+        editable: true,
+        layer: LAYERS.WALLS,
+        isExterior: w.type === 'exterior',
+      });
+    });
+
+    const detectedRooms: RoomData[] = plan.rooms.map((r, i) => {
+      const center = r.polygon.reduce(
+        (acc, p) => ({ x: acc.x + p.x, z: acc.z + p.y }),
+        { x: 0, z: 0 }
+      );
+      center.x /= r.polygon.length;
+      center.z /= r.polygon.length;
+      return {
+        id: `room_${i}`,
+        name: r.name,
+        type: r.type as any,
+        walls: [],
+        polygon: r.polygon.map(p => ({ x: p.x - cx, z: p.y - cz })),
+        area: r.area,
+        center: { x: center.x - cx, z: center.z - cz },
+      };
+    });
+
+    detectedRooms.forEach(room => {
+      const size = Math.sqrt(room.area) * 1.2;
+      newObjects.push({
+        id: `floor_${room.id}`,
+        type: 'floor',
+        source_2d: room.id,
+        position: [room.center.x, 0.01, room.center.z],
+        rotation: [0, 0, 0],
+        dimensions: { length: size, thickness: size, height: 0.02 },
+        confidence: 1,
+        editable: true,
+        layer: LAYERS.FLOORS,
+        roomId: room.id,
+        name: room.name,
+      });
+      newObjects.push({
+        id: `ceiling_${room.id}`,
+        type: 'ceiling',
+        source_2d: room.id,
+        position: [room.center.x, 2.80, room.center.z],
+        rotation: [0, 0, 0],
+        dimensions: { length: size, thickness: size, height: 0.02 },
+        confidence: 1,
+        editable: true,
+        layer: LAYERS.CEILINGS,
+        roomId: room.id,
+        name: room.name,
+      });
+    });
+
+    newObjects.push({
+      id: 'ground_floor',
+      type: 'floor',
+      source_2d: 'ground',
+      position: [0, -0.01, 0],
+      rotation: [0, 0, 0],
+      dimensions: { length: plan.widthMeters + 0.5, thickness: plan.heightMeters + 0.5, height: 0.02 },
+      confidence: 1,
+      editable: true,
+      layer: LAYERS.FLOORS,
+      name: 'Piso Térreo',
+    });
+
+    const syntheticPlan = {
+      projectName: 'Planta Gemini',
+      totalArea: plan.widthMeters * plan.heightMeters,
+      totalWidth: plan.widthMeters,
+      totalDepth: plan.heightMeters,
+      wallHeight: 2.80,
+      floors: 1,
+      vertices: [],
+      walls: plan.walls.map((w, i) => ({
+        id: `W${i}`,
+        length: Math.sqrt((w.end.x - w.start.x) ** 2 + (w.end.y - w.start.y) ** 2),
+        thickness: w.thickness,
+        height: 2.80,
+        type: w.type,
+        sourceStart: { x: 0, y: 0 },
+        sourceEnd: { x: 0, y: 0 },
+      })),
+      dimensions: [],
+      rooms: plan.rooms.map((r, i) => ({
+        id: `R${i}`,
+        name: r.name,
+        type: r.type,
+        walls: [],
+        floor: r.polygon,
+        area: r.area,
+        center: { x: 0, y: 0 },
+      })),
+    };
+
+    setProcessedPlan(syntheticPlan as any);
+    setModel3d({ objects: newObjects, rooms: detectedRooms } as any);
+    setSuccessMsg(`✅ ${newObjects.filter(o => o.type === 'wall').length} paredes + ${plan.rooms.length} cômodos via Gemini AI (${plan.widthMeters}×${plan.heightMeters}m)`);
+  }, [setProcessedPlan, setModel3d]);
+
+  // ============================================
+  // UPLOAD + DETECT: Gemini AI (com fallbacks)
   // ============================================
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -97,11 +234,9 @@ export default function App() {
     setProcessingStatus('Carregando arquivo...');
 
     try {
-      // 1. Converte PDF/PNG/JPG para imagem
       const { convertFileToImage } = await import('./lib/pdfConverter');
       const imageDataUrl = await convertFileToImage(file);
 
-      // 2. Carrega como HTMLImageElement
       const img = await new Promise<HTMLImageElement>((resolve, reject) => {
         const imgEl = new Image();
         imgEl.onload = () => resolve(imgEl);
@@ -110,110 +245,79 @@ export default function App() {
       });
 
       setCapturedImage(imageDataUrl);
-      setProcessingStatus('Detectando paredes...');
+      setProcessingStatus('Gemini AI analisando...');
 
-      // 3. Parser AxisLine (sem OpenCV, sem Hough)
+      // ESTRATÉGIA 1: Gemini AI (online, melhor qualidade)
+      try {
+        const plan = await geminiChat.analyzeImage(imageDataUrl);
+        if (plan && plan.walls.length >= 4) {
+          applyGeminiPlan(plan);
+          setIsProcessing(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          return;
+        }
+      } catch (e) {
+        console.warn('Gemini falhou:', e);
+      }
+
+      // ESTRATÉGIA 2: Parser local (offline)
+      setProcessingStatus('Parser local...');
       const result = await axisLineParser.parse(img, {
         onProgress: (msg) => setProcessingStatus(msg),
       });
 
-      if (!result.success || result.walls.length < 4) {
-        setError(
-          `Não foi possível detectar paredes suficientes. ` +
-          `Detectadas: ${result.walls.length}. ` +
-          `Tente uma imagem com paredes em alto contraste.`
-        );
+      if (result.success && result.walls.length >= 4) {
+        // Converte para formato Gemini
+        const cx = result.plan!.totalWidth / 2;
+        const cz = result.plan!.totalDepth / 2;
+        const ppm = img.width / result.plan!.totalWidth;
+        const plan: GeminiFloorPlan = {
+          widthMeters: result.plan!.totalWidth,
+          heightMeters: result.plan!.totalDepth,
+          walls: result.walls.map(w => ({
+            start: { x: (w.sourceStart?.x || 0) / ppm - cx + cx, y: (w.sourceStart?.y || 0) / ppm - cz + cz },
+            end: { x: (w.sourceEnd?.x || 0) / ppm - cx + cx, y: (w.sourceEnd?.y || 0) / ppm - cz + cz },
+            thickness: w.thickness,
+            type: w.type === 'exterior' ? 'exterior' : 'interior',
+          })),
+          rooms: result.rooms.map(r => ({
+            name: r.name || 'Cômodo',
+            type: 'unknown',
+            polygon: r.floor.map(p => ({ x: p.x + cx, y: p.y + cz })),
+            area: r.area,
+          })),
+          notes: 'Detectado por parser local (offline)',
+        };
+        applyGeminiPlan(plan);
         setIsProcessing(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
 
-      setProcessingStatus(`${result.walls.length} paredes detectadas`);
-
-      // 4. Constrói modelo 3D
-      const cx = result.plan!.totalWidth / 2;
-      const cz = result.plan!.totalDepth / 2;
-      const ppm = img.width / result.plan!.totalWidth;
-
-      // Converte para SemanticObjects
-      const newObjects: any[] = [];
-      result.walls.forEach((w, i) => {
-        const sx = (w.sourceStart?.x || 0) / ppm - cx;
-        const sz = (w.sourceStart?.y || 0) / ppm - cz;
-        const ex = (w.sourceEnd?.x || 0) / ppm - cx;
-        const ez = (w.sourceEnd?.y || 0) / ppm - cz;
-        const length = Math.sqrt((ex - sx) ** 2 + (ez - sz) ** 2);
-        const isExt = w.length > Math.max(result.plan!.totalWidth, result.plan!.totalDepth) * 0.6;
-        newObjects.push({
-          id: `wall_${i}`,
-          type: 'wall',
-          source_2d: w.id,
-          position: [(sx + ex) / 2, 1.4, (sz + ez) / 2],
-          rotation: [0, -Math.atan2(ez - sz, ex - sx), 0],
-          dimensions: { length, thickness: isExt ? 0.25 : 0.15, height: 2.80 },
-          confidence: 0.9,
-          editable: true,
-          layer: LAYERS.WALLS,
-          isExterior: isExt,
-        });
-      });
-
-      // Cômodos com piso e teto
-      const detectedRooms: RoomData[] = result.rooms.map((r, i) => ({
-        id: r.id,
-        name: r.name || `Cômodo ${i + 1}`,
-        type: 'unknown' as any,
-        walls: [],
-        polygon: r.floor.map(p => ({ x: p.x, z: p.y })),
-        area: r.area,
-        center: { x: r.center.x, z: r.center.y },
-      }));
-
-      detectedRooms.forEach(room => {
-        newObjects.push({
-          id: `floor_${room.id}`,
-          type: 'floor',
-          source_2d: room.id,
-          position: [room.center.x, 0.01, room.center.z],
-          rotation: [0, 0, 0],
-          dimensions: { length: Math.sqrt(room.area) * 1.2, thickness: Math.sqrt(room.area) * 1.2, height: 0.02 },
-          confidence: 1,
-          editable: true,
-          layer: LAYERS.FLOORS,
-          roomId: room.id,
-          name: room.name,
-        });
-        newObjects.push({
-          id: `ceiling_${room.id}`,
-          type: 'ceiling',
-          source_2d: room.id,
-          position: [room.center.x, 2.80, room.center.z],
-          rotation: [0, 0, 0],
-          dimensions: { length: Math.sqrt(room.area) * 1.2, thickness: Math.sqrt(room.area) * 1.2, height: 0.02 },
-          confidence: 1,
-          editable: true,
-          layer: LAYERS.CEILINGS,
-          roomId: room.id,
-          name: room.name,
-        });
-      });
-
-      // Piso único embaixo (cobre a casa toda)
-      newObjects.push({
-        id: 'ground_floor',
-        type: 'floor',
-        source_2d: 'ground',
-        position: [0, -0.01, 0],
-        rotation: [0, 0, 0],
-        dimensions: { length: result.plan!.totalWidth + 0.5, thickness: result.plan!.totalDepth + 0.5, height: 0.02 },
-        confidence: 1,
-        editable: true,
-        layer: LAYERS.FLOORS,
-        name: 'Piso Térreo',
-      });
-
-      setProcessedPlan(result.plan! as any);
-      setModel3d({ objects: newObjects, rooms: detectedRooms } as any);
-      setSuccessMsg(`✅ ${result.walls.length} paredes + ${result.rooms.length} cômodos em ${result.plan!.totalWidth.toFixed(1)}×${result.plan!.totalDepth.toFixed(1)}m`);
+      // ESTRATÉGIA 3: Fallback simples (4 paredes + 1-2 divisões)
+      setProcessingStatus('Gerando estrutura padrão...');
+      const fallback = await simpleFallbackParser.parse(img);
+      if (fallback.success) {
+        const plan: GeminiFloorPlan = {
+          widthMeters: fallback.plan!.totalWidth,
+          heightMeters: fallback.plan!.totalDepth,
+          walls: fallback.walls.map(w => ({
+            start: { x: w.sourceStart?.x ?? 0, y: w.sourceStart?.y ?? 0 },
+            end: { x: w.sourceEnd?.x ?? 0, y: w.sourceEnd?.y ?? 0 },
+            thickness: w.thickness,
+            type: w.type === 'exterior' ? 'exterior' : 'interior',
+          })),
+          rooms: fallback.rooms.map(r => ({
+            name: r.name,
+            type: 'unknown',
+            polygon: r.floor,
+            area: r.area,
+          })),
+          notes: fallback.warnings[0] || 'Estrutura padrão gerada',
+        };
+        applyGeminiPlan(plan);
+        setSuccessMsg(`ℹ️ Estrutura padrão: ${plan.walls.length} paredes, ${plan.rooms.length} cômodos. Toque em "Chat com IA" para refinar.`);
+      }
       setIsProcessing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
@@ -221,14 +325,16 @@ export default function App() {
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [setCapturedImage, setProcessedPlan, setModel3d]);
+  }, [setCapturedImage, setProcessedPlan, setModel3d, applyGeminiPlan]);
 
   const handleReset = useCallback(() => {
     setProcessedPlan(null);
     setModel3d(null);
     setCapturedImage(null);
+    setPendingImage(null);
     setError(null);
     setSuccessMsg(null);
+    geminiChat.reset();
   }, [setProcessedPlan, setModel3d, setCapturedImage]);
 
   if (showPermissions) {
@@ -245,6 +351,41 @@ export default function App() {
   if (view === 'library') return <PlantLibrary onClose={() => setView(null)} />;
   if (view === 'gaussian') return <GaussianSplattingViewer onClose={() => setView(null)} />;
   if (view === 'precise') return <PreciseBlockoutEditor onClose={() => setView(null)} />;
+  if (view === 'aiChat') {
+    const img = pendingImage || (typeof window !== 'undefined' ? window.localStorage.getItem('floorvision_last_image') : null);
+    if (img) {
+      return <GeminiChatPanel initialImage={img} onClose={() => setView(null)} onApply={(plan) => { applyGeminiPlan(plan); setView(null); }} />;
+    }
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col items-center justify-center p-6">
+        <Bot className="w-16 h-16 text-pink-400 mb-4" />
+        <h2 className="text-white text-lg font-bold mb-2">Chat com Gemini AI</h2>
+        <p className="text-slate-400 text-sm text-center mb-6 max-w-sm">
+          Importe uma planta primeiro usando o botão abaixo, depois abra este chat para refinar a estrutura com IA.
+        </p>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,.pdf"
+          onChange={handleFileUpload}
+          className="hidden"
+          id="plant-upload-chat"
+        />
+        <label
+          htmlFor="plant-upload-chat"
+          className="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 rounded-xl text-white text-sm font-semibold cursor-pointer"
+        >
+          Importar planta
+        </label>
+        <button
+          onClick={() => setView(null)}
+          className="mt-3 px-5 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 text-sm"
+        >
+          Voltar
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container h-full flex flex-col bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 text-white">
@@ -256,7 +397,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="font-bold text-lg leading-none">Floor3D</h1>
-            <p className="text-[10px] text-slate-400 leading-none mt-1">Planta → 3D</p>
+            <p className="text-[10px] text-slate-400 leading-none mt-1">Planta → 3D com IA</p>
           </div>
         </div>
         {processedPlan && (
@@ -303,8 +444,8 @@ export default function App() {
                   </h2>
                   <p className="text-sm text-slate-300 mb-3">
                     {isProcessing
-                      ? 'Aguarde — detectando paredes e cômodos'
-                      : 'Toque — converte PNG/JPG/PDF em casa 3D'}
+                      ? 'Gemini AI → parser local → fallback'
+                      : 'Gemini AI analisa — funciona com qualquer imagem'}
                   </p>
                   {!isProcessing && (
                     <>
@@ -312,7 +453,22 @@ export default function App() {
                         ref={fileInputRef}
                         type="file"
                         accept="image/*,.pdf"
-                        onChange={handleFileUpload}
+                        onChange={(e) => {
+                          handleFileUpload(e);
+                          // Salvar a imagem selecionada para o chat
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              const dataUrl = ev.target?.result as string;
+                              if (typeof window !== 'undefined' && dataUrl) {
+                                window.localStorage.setItem('floorvision_last_image', dataUrl);
+                                setPendingImage(dataUrl);
+                              }
+                            };
+                            reader.readAsDataURL(f);
+                          }
+                        }}
                         className="hidden"
                         id="plant-upload"
                       />
@@ -336,7 +492,7 @@ export default function App() {
           </div>
         </section>
 
-        {/* MODE GRID: 4 cards */}
+        {/* MODE GRID: 5 cards */}
         <section className="px-4 pb-6">
           <div className="max-w-2xl mx-auto space-y-5">
             <div>
