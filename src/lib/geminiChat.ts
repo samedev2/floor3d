@@ -6,12 +6,11 @@
  * - User asks Gemini to modify the structure
  * - Gemini returns updated JSON with walls/rooms
  *
- * This is the PRIMARY detection method - much more reliable than CV.
+ * API key is read from localStorage (user-configurable in Settings)
  */
 
-const GEMINI_API_KEY = 'AIzaSyAQ.Ab8RN6Lmgm0ICDAvN5-q2UvmxC7Jibp4t2-PXwWo-6k3JHwwrQ';
-
 const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const STORAGE_KEY = 'floorvision_gemini_key';
 
 export interface Wall2D {
   start: { x: number; y: number };
@@ -51,9 +50,10 @@ CRITICAL RULES:
 - Coordinates are in METERS from the BOTTOM-LEFT corner (0,0 = bottom-left, X grows right, Y grows up)
 - Return ONLY valid JSON, no markdown, no explanations outside JSON
 - If the floor plan is unclear, return your BEST GUESS as a SIMPLE rectangular structure
-- NEVER return 50+ walls. Typical house has 8-15 walls. NEVER exceed 30 walls.
+- Typical Brazilian house has 8-15 walls. NEVER exceed 30 walls.
 - DO NOT detect furniture (beds, sofas, tables) as walls
 - DO NOT detect small icons or annotations as walls
+- Be CONSERVATIVE — only detect clear walls and rooms
 
 OUTPUT FORMAT (strict JSON, no other text):
 {
@@ -75,7 +75,7 @@ OUTPUT FORMAT (strict JSON, no other text):
       "area": 12
     }
   ],
-  "notes": "Optional: short description of what you see"
+  "notes": "Optional: short description"
 }
 
 GUIDELINES:
@@ -85,16 +85,27 @@ GUIDELINES:
 - A "WC" (bathroom) is typically 2-4 m²
 - Standard ceiling height: 2.80m
 - Wall thickness: 25cm exterior, 15cm interior
-- Brazilian houses typically have 6m x 8m, 8m x 10m, 10m x 12m dimensions`;
+- Brazilian houses typically have 6m x 8m, 8m x 10m, 10m x 12m dimensions
 
-const REFINEMENT_PROMPT = `You are helping refine a 3D floor plan. The user will give you an instruction in Portuguese or English.
-Apply the instruction to the current structure and return the UPDATED structure.
+For the WALLS array:
+- Include the 4 outer perimeter walls (type: "exterior")
+- Include ALL internal walls (type: "interior")
+- Order: exterior first, then interior
+
+For the ROOMS array:
+- Include EVERY enclosed space, with its polygonal corners
+- The polygon should have 4+ points for non-rectangular rooms
+- Calculate area in m² (width × height for rectangles)
+- Use Portuguese names (Sala, Quarto, Cozinha, WC, etc.) when identifiable`;
+
+const REFINEMENT_PROMPT = `You are helping refine a 3D floor plan. The user gives you an instruction in Portuguese or English.
+Apply the instruction to the current structure and return the UPDATED FULL structure.
 
 ALWAYS return the FULL updated structure (not just the changes).
 ALWAYS return JSON in the same format as before.
 
 If the user asks to:
-- Add a wall: insert the new wall into walls[]
+- Add a wall: insert into walls[]
 - Remove a wall: remove from walls[]
 - Add a room: define new room in rooms[]
 - Split a room: divide polygon, add internal wall
@@ -106,19 +117,36 @@ interface ChatTurn {
   parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>;
 }
 
+export function getApiKey(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(STORAGE_KEY);
+}
+
+export function hasApiKey(): boolean {
+  const key = getApiKey();
+  return !!key && key.length > 10;
+}
+
 export class GeminiChat {
   private history: ChatTurn[] = [];
   private currentPlan: GeminiFloorPlan | null = null;
 
   constructor() {
-    this.history.push({
-      role: 'user',
-      parts: [{ text: SYSTEM_PROMPT }],
-    });
-    this.history.push({
-      role: 'model',
-      parts: [{ text: 'Understood. I will return only valid JSON floor plans in the specified format. Send me the image.' }],
-    });
+    this.reset();
+  }
+
+  reset(): void {
+    this.history = [
+      {
+        role: 'user',
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
+      {
+        role: 'model',
+        parts: [{ text: 'Understood. I will return only valid JSON floor plans in the specified format. Send me the image.' }],
+      },
+    ];
+    this.currentPlan = null;
   }
 
   /**
@@ -128,6 +156,11 @@ export class GeminiChat {
     imageDataUrl: string,
     userHint?: string
   ): Promise<GeminiFloorPlan> {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      throw new Error('NO_API_KEY');
+    }
+
     const { mime, data } = this.parseDataUrl(imageDataUrl);
 
     const userText = userHint ||
@@ -141,13 +174,14 @@ export class GeminiChat {
       ],
     });
 
-    const result = await this.callApi();
-    const plan = this.parseResponse(result);
+    const rawText = await this.callApi(apiKey);
+    const plan = this.extractJson(rawText);
 
-    if (plan) {
+    if (plan && plan.walls && plan.walls.length >= 4) {
       this.currentPlan = plan;
+      return plan;
     }
-    return plan || this.simpleFallback();
+    throw new Error('NO_WALLS_FOUND');
   }
 
   /**
@@ -156,6 +190,11 @@ export class GeminiChat {
   async refine(
     instruction: string
   ): Promise<{ plan: GeminiFloorPlan; reply: string }> {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      throw new Error('NO_API_KEY');
+    }
+
     const contextMsg = this.currentPlan
       ? `\n\nCURRENT STRUCTURE:\n${JSON.stringify(this.currentPlan, null, 2)}`
       : '';
@@ -165,7 +204,7 @@ export class GeminiChat {
       parts: [{ text: `${REFINEMENT_PROMPT}${contextMsg}\n\nUSER INSTRUCTION: ${instruction}` }],
     });
 
-    const rawText = await this.callApiRaw();
+    const rawText = await this.callApi(apiKey);
     const plan = this.extractJson(rawText);
 
     if (plan) {
@@ -186,11 +225,6 @@ export class GeminiChat {
     this.currentPlan = plan;
   }
 
-  reset(): void {
-    this.history = this.history.slice(0, 2);
-    this.currentPlan = null;
-  }
-
   // ============================================
   // PRIVATE HELPERS
   // ============================================
@@ -198,22 +232,17 @@ export class GeminiChat {
   private parseDataUrl(url: string): { mime: string; data: string } {
     const match = url.match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
-      // Not a data URL — assume JPEG
       return { mime: 'image/jpeg', data: url };
     }
     return { mime: match[1], data: match[2] };
   }
 
-  private async callApi(): Promise<string> {
-    return this.callApiRaw();
-  }
-
-  private async callApiRaw(): Promise<string> {
+  private async callApi(apiKey: string): Promise<string> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
-      const response = await fetch(`${API_URL}?key=${GEMINI_API_KEY}`, {
+      const response = await fetch(`${API_URL}?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
@@ -231,38 +260,40 @@ export class GeminiChat {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Gemini API error: ${response.status}`);
+        const errData = await response.json().catch(() => ({}));
+        const msg = errData.error?.message || `HTTP ${response.status}`;
+        if (response.status === 400) {
+          throw new Error('Chave da API inválida. Configure em Configurações.');
+        }
+        if (response.status === 429) {
+          throw new Error('Limite de uso excedido. Tente em alguns minutos.');
+        }
+        throw new Error(msg);
       }
 
       const data = await response.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error('Empty Gemini response');
+      if (!text) throw new Error('Resposta vazia do Gemini');
 
-      // Add model response to history
       this.history.push({
         role: 'model',
         parts: [{ text }],
       });
 
       return text;
-    } catch (e) {
+    } catch (e: any) {
       clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        throw new Error('Timeout: Gemini demorou demais para responder');
+      }
       throw e;
     }
   }
 
-  private parseResponse(rawText: string): GeminiFloorPlan | null {
-    return this.extractJson(rawText);
-  }
-
   private extractJson(text: string): GeminiFloorPlan | null {
-    // Try direct parse
-    try {
-      return JSON.parse(text);
-    } catch {}
-
-    // Remove markdown
     const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+    // Try direct parse
     try {
       return JSON.parse(cleaned);
     } catch {}
@@ -278,7 +309,7 @@ export class GeminiChat {
   }
 
   private extractTextOutsideJson(text: string): string {
-    return text.replace(/```json[\s\S]*?```/g, '').replace(/\{[\s\S]*\}/g, '').trim() || 'Pronto!';
+    return text.replace(/```json[\s\S]*?```/g, '').replace(/\{[\s\S]*\}/g, '').trim() || 'Estrutura atualizada!';
   }
 
   /**
@@ -293,14 +324,13 @@ export class GeminiChat {
         { start: { x: widthMeters, y: 0 }, end: { x: widthMeters, y: heightMeters }, thickness: 0.25, type: 'exterior' },
         { start: { x: widthMeters, y: heightMeters }, end: { x: 0, y: heightMeters }, thickness: 0.25, type: 'exterior' },
         { start: { x: 0, y: heightMeters }, end: { x: 0, y: 0 }, thickness: 0.25, type: 'exterior' },
-        // Internal divider
         { start: { x: widthMeters / 2, y: 0 }, end: { x: widthMeters / 2, y: heightMeters }, thickness: 0.15, type: 'interior' },
       ],
       rooms: [
-        { name: 'Sala', type: 'living', polygon: [{ x: 0, y: 0 }, { x: widthMeters / 2, y: 0 }, { x: widthMeters / 2, y: heightMeters }, { x: 0, y: heightMeters }], area: widthMeters * heightMeters / 2 },
-        { name: 'Quarto', type: 'bedroom', polygon: [{ x: widthMeters / 2, y: 0 }, { x: widthMeters, y: 0 }, { x: widthMeters, y: heightMeters }, { x: widthMeters / 2, y: heightMeters }], area: widthMeters * heightMeters / 2 },
+        { name: 'Sala', type: 'living', polygon: [{ x: 0, y: 0 }, { x: widthMeters / 2, y: 0 }, { x: widthMeters / 2, y: heightMeters }, { x: 0, y: heightMeters }], area: (widthMeters * heightMeters) / 2 },
+        { name: 'Quarto', type: 'bedroom', polygon: [{ x: widthMeters / 2, y: 0 }, { x: widthMeters, y: 0 }, { x: widthMeters, y: heightMeters }, { x: widthMeters / 2, y: heightMeters }], area: (widthMeters * heightMeters) / 2 },
       ],
-      notes: 'Estrutura padrão de fallback (IA offline)',
+      notes: 'Estrutura padrão de fallback',
     };
   }
 }

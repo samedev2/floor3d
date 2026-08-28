@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Upload,
   RefreshCw,
@@ -12,6 +12,8 @@ import {
   Activity,
   ChevronRight,
   Bot,
+  Key,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 import { FloorPlan3DViewer } from './components/FloorPlan3DViewer';
 import { PermissionHandler } from './components/PermissionHandler';
@@ -19,15 +21,16 @@ import { PlantLibrary } from './components/PlantLibrary';
 import { GaussianSplattingViewer } from './components/GaussianSplattingViewer';
 import { PreciseBlockoutEditor } from './components/PreciseBlockoutEditor';
 import { GeminiChatPanel } from './components/GeminiChatPanel';
+import { SettingsPanel } from './components/SettingsPanel';
 import { useStore } from './store';
 import { axisLineParser } from './floorplan/axisLineParser';
 import { simpleFallbackParser } from './floorplan/simpleFallbackParser';
-import { geminiChat, type GeminiFloorPlan } from './lib/geminiChat';
+import { geminiChat, hasApiKey, type GeminiFloorPlan } from './lib/geminiChat';
 import { LAYERS } from './floorplan/typesExtensions';
 import type { RoomData } from './floorplan/typesExtensions';
 import './App.css';
 
-type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat';
+type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat' | 'settings';
 
 interface ModeCard {
   key: ViewKey;
@@ -42,7 +45,7 @@ const MODE_CARDS: ModeCard[] = [
   {
     key: 'aiChat',
     title: 'Chat com IA',
-    desc: 'Gemini analisa e refina a planta',
+    desc: 'Gemini analisa a planta',
     icon: <Bot />,
     gradient: 'from-pink-500/30 to-purple-600/10',
     border: 'border-pink-500/40',
@@ -50,7 +53,7 @@ const MODE_CARDS: ModeCard[] = [
   {
     key: 'viewer3D',
     title: 'Visualizador 360°',
-    desc: 'Gira e explora a casa em 3D',
+    desc: 'Gira e explora a casa 3D',
     icon: <Eye />,
     gradient: 'from-emerald-500/30 to-teal-600/10',
     border: 'border-emerald-500/40',
@@ -74,7 +77,7 @@ const MODE_CARDS: ModeCard[] = [
   {
     key: 'gaussian',
     title: 'Gaussian Splatting',
-    desc: 'Imagem → PLY/GLB + Pin Tracker',
+    desc: 'Imagem → PLY/GLB + Pin',
     icon: <Sparkles />,
     gradient: 'from-amber-500/30 to-orange-600/10',
     border: 'border-amber-500/40',
@@ -89,13 +92,20 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [aiEnabled, setAiEnabled] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatFileInputRef = useRef<HTMLInputElement>(null);
   const {
     setProcessedPlan,
     setModel3d,
     setCapturedImage,
     processedPlan,
   } = useStore();
+
+  // Check if API key exists
+  useEffect(() => {
+    setAiEnabled(hasApiKey());
+  }, [view]);
 
   // ============================================
   // CONVERTE PLANO GEMINI → MODELO 3D
@@ -105,13 +115,15 @@ export default function App() {
     const cz = plan.heightMeters / 2;
 
     const newObjects: any[] = [];
+    let extCount = 0, intCount = 0;
     plan.walls.forEach((w, i) => {
       const sx = w.start.x - cx;
       const sz = w.start.y - cz;
       const ex = w.end.x - cx;
       const ez = w.end.y - cz;
       const length = Math.sqrt((ex - sx) ** 2 + (ez - sz) ** 2);
-      if (length < 0.1) return; // pula paredes degeneradas
+      if (length < 0.1) return; // ignora paredes degeneradas
+      if (w.type === 'exterior') extCount++; else intCount++;
       newObjects.push({
         id: `wall_${i}`,
         type: 'wall',
@@ -131,8 +143,10 @@ export default function App() {
         (acc, p) => ({ x: acc.x + p.x, z: acc.z + p.y }),
         { x: 0, z: 0 }
       );
-      center.x /= r.polygon.length;
-      center.z /= r.polygon.length;
+      if (r.polygon.length > 0) {
+        center.x /= r.polygon.length;
+        center.z /= r.polygon.length;
+      }
       return {
         id: `room_${i}`,
         name: r.name,
@@ -145,7 +159,7 @@ export default function App() {
     });
 
     detectedRooms.forEach(room => {
-      const size = Math.sqrt(room.area) * 1.2;
+      const size = Math.max(2, Math.sqrt(Math.max(1, room.area)) * 1.2);
       newObjects.push({
         id: `floor_${room.id}`,
         type: 'floor',
@@ -188,7 +202,7 @@ export default function App() {
     });
 
     const syntheticPlan = {
-      projectName: 'Planta Gemini',
+      projectName: 'Planta IA',
       totalArea: plan.widthMeters * plan.heightMeters,
       totalWidth: plan.widthMeters,
       totalDepth: plan.heightMeters,
@@ -218,7 +232,7 @@ export default function App() {
 
     setProcessedPlan(syntheticPlan as any);
     setModel3d({ objects: newObjects, rooms: detectedRooms } as any);
-    setSuccessMsg(`✅ ${newObjects.filter(o => o.type === 'wall').length} paredes + ${plan.rooms.length} cômodos via Gemini AI (${plan.widthMeters}×${plan.heightMeters}m)`);
+    setSuccessMsg(`✅ ${extCount} paredes externas + ${intCount} internas, ${plan.rooms.length} cômodos em ${plan.widthMeters}×${plan.heightMeters}m`);
   }, [setProcessedPlan, setModel3d]);
 
   // ============================================
@@ -233,6 +247,17 @@ export default function App() {
     setSuccessMsg(null);
     setProcessingStatus('Carregando arquivo...');
 
+    // Salva a imagem para o chat (sempre, mesmo se parsing falhar)
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (typeof window !== 'undefined' && dataUrl) {
+        window.localStorage.setItem('floorvision_last_image', dataUrl);
+        setPendingImage(dataUrl);
+      }
+    };
+    reader.readAsDataURL(file);
+
     try {
       const { convertFileToImage } = await import('./lib/pdfConverter');
       const imageDataUrl = await convertFileToImage(file);
@@ -245,29 +270,35 @@ export default function App() {
       });
 
       setCapturedImage(imageDataUrl);
-      setProcessingStatus('Gemini AI analisando...');
 
-      // ESTRATÉGIA 1: Gemini AI (online, melhor qualidade)
-      try {
-        const plan = await geminiChat.analyzeImage(imageDataUrl);
-        if (plan && plan.walls.length >= 4) {
-          applyGeminiPlan(plan);
-          setIsProcessing(false);
-          if (fileInputRef.current) fileInputRef.current.value = '';
-          return;
+      // ESTRATÉGIA 1: Gemini AI (se tem chave)
+      if (hasApiKey()) {
+        try {
+          setProcessingStatus('Gemini AI analisando...');
+          const plan = await geminiChat.analyzeImage(imageDataUrl);
+          if (plan && plan.walls.length >= 4) {
+            applyGeminiPlan(plan);
+            setIsProcessing(false);
+            return;
+          }
+        } catch (e: any) {
+          console.warn('Gemini falhou:', e);
+          // Mostra erro mas continua com fallback
+          if (e.message && !e.message.includes('NO_API_KEY')) {
+            setError(`IA: ${e.message}. Usando parser local...`);
+          }
         }
-      } catch (e) {
-        console.warn('Gemini falhou:', e);
+      } else {
+        setError(null);
       }
 
-      // ESTRATÉGIA 2: Parser local (offline)
-      setProcessingStatus('Parser local...');
+      // ESTRATÉGIA 2: Parser local (axis-line)
+      setProcessingStatus('Parser local (offline)...');
       const result = await axisLineParser.parse(img, {
         onProgress: (msg) => setProcessingStatus(msg),
       });
 
       if (result.success && result.walls.length >= 4) {
-        // Converte para formato Gemini
         const cx = result.plan!.totalWidth / 2;
         const cz = result.plan!.totalDepth / 2;
         const ppm = img.width / result.plan!.totalWidth;
@@ -290,12 +321,11 @@ export default function App() {
         };
         applyGeminiPlan(plan);
         setIsProcessing(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
 
-      // ESTRATÉGIA 3: Fallback simples (4 paredes + 1-2 divisões)
-      setProcessingStatus('Gerando estrutura padrão...');
+      // ESTRATÉGIA 3: Fallback simples
+      setProcessingStatus('Estrutura padrão...');
       const fallback = await simpleFallbackParser.parse(img);
       if (fallback.success) {
         const plan: GeminiFloorPlan = {
@@ -316,14 +346,12 @@ export default function App() {
           notes: fallback.warnings[0] || 'Estrutura padrão gerada',
         };
         applyGeminiPlan(plan);
-        setSuccessMsg(`ℹ️ Estrutura padrão: ${plan.walls.length} paredes, ${plan.rooms.length} cômodos. Toque em "Chat com IA" para refinar.`);
+        setSuccessMsg(`ℹ️ Estrutura padrão (6×8m): ${plan.walls.length} paredes, ${plan.rooms.length} cômodos. Configure a chave Gemini para melhor detecção.`);
       }
       setIsProcessing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
       setIsProcessing(false);
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }, [setCapturedImage, setProcessedPlan, setModel3d, applyGeminiPlan]);
 
@@ -351,38 +379,63 @@ export default function App() {
   if (view === 'library') return <PlantLibrary onClose={() => setView(null)} />;
   if (view === 'gaussian') return <GaussianSplattingViewer onClose={() => setView(null)} />;
   if (view === 'precise') return <PreciseBlockoutEditor onClose={() => setView(null)} />;
+  if (view === 'settings') return <SettingsPanel onClose={() => setView(null)} />;
   if (view === 'aiChat') {
     const img = pendingImage || (typeof window !== 'undefined' ? window.localStorage.getItem('floorvision_last_image') : null);
     if (img) {
-      return <GeminiChatPanel initialImage={img} onClose={() => setView(null)} onApply={(plan) => { applyGeminiPlan(plan); setView(null); }} />;
+      return (
+        <GeminiChatPanel
+          initialImage={img}
+          onClose={() => setView(null)}
+          onApply={(plan) => { applyGeminiPlan(plan); setView(null); }}
+        />
+      );
     }
     return (
       <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col items-center justify-center p-6">
         <Bot className="w-16 h-16 text-pink-400 mb-4" />
-        <h2 className="text-white text-lg font-bold mb-2">Chat com Gemini AI</h2>
-        <p className="text-slate-400 text-sm text-center mb-6 max-w-sm">
-          Importe uma planta primeiro usando o botão abaixo, depois abra este chat para refinar a estrutura com IA.
+        <h2 className="text-white text-lg font-bold mb-2">Chat com IA</h2>
+        <p className="text-slate-400 text-sm text-center mb-2 max-w-sm">
+          Importe uma planta 2D para começar.
         </p>
+        {!aiEnabled && (
+          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-start gap-2 max-w-sm">
+            <Key className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="text-xs text-amber-200">
+              <strong>Sem chave Gemini:</strong> o app usará o parser local. Configure a chave em <button onClick={() => setView('settings')} className="underline">Configurações</button> para análise com IA.
+            </div>
+          </div>
+        )}
         <input
-          ref={fileInputRef}
+          ref={chatFileInputRef}
           type="file"
           accept="image/*,.pdf"
           onChange={handleFileUpload}
           className="hidden"
           id="plant-upload-chat"
         />
-        <label
-          htmlFor="plant-upload-chat"
-          className="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 rounded-xl text-white text-sm font-semibold cursor-pointer"
-        >
-          Importar planta
-        </label>
-        <button
-          onClick={() => setView(null)}
-          className="mt-3 px-5 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 text-sm"
-        >
-          Voltar
-        </button>
+        <div className="flex flex-col gap-2 w-full max-w-xs">
+          <label
+            htmlFor="plant-upload-chat"
+            className="px-5 py-3 bg-cyan-500 hover:bg-cyan-400 rounded-xl text-white text-sm font-semibold cursor-pointer text-center"
+          >
+            <Upload className="inline w-4 h-4 mr-2" />
+            Importar planta
+          </label>
+          <button
+            onClick={() => setView('settings')}
+            className="px-5 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 text-sm flex items-center justify-center gap-2"
+          >
+            <Key className="w-4 h-4" />
+            Configurar chave Gemini
+          </button>
+          <button
+            onClick={() => setView(null)}
+            className="px-5 py-2 text-slate-400 hover:text-slate-300 text-sm"
+          >
+            Voltar
+          </button>
+        </div>
       </div>
     );
   }
@@ -397,18 +450,30 @@ export default function App() {
           </div>
           <div>
             <h1 className="font-bold text-lg leading-none">Floor3D</h1>
-            <p className="text-[10px] text-slate-400 leading-none mt-1">Planta → 3D com IA</p>
+            <p className="text-[10px] text-slate-400 leading-none mt-1">Planta → 3D</p>
           </div>
         </div>
-        {processedPlan && (
+        <div className="flex items-center gap-1">
           <button
-            onClick={handleReset}
-            className="p-2 rounded-lg hover:bg-slate-800 transition-colors"
-            title="Nova planta"
+            onClick={() => setView('settings')}
+            className="p-2 rounded-lg hover:bg-slate-800 transition-colors relative"
+            title="Configurações"
           >
-            <RefreshCw className="w-5 h-5 text-slate-400" />
+            <SettingsIcon className="w-5 h-5 text-slate-400" />
+            {aiEnabled && (
+              <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full" />
+            )}
           </button>
-        )}
+          {processedPlan && (
+            <button
+              onClick={handleReset}
+              className="p-2 rounded-lg hover:bg-slate-800 transition-colors"
+              title="Nova planta"
+            >
+              <RefreshCw className="w-5 h-5 text-slate-400" />
+            </button>
+          )}
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto">
@@ -428,6 +493,16 @@ export default function App() {
               </div>
             )}
 
+            {!aiEnabled && (
+              <div className="mb-3 p-3 bg-gradient-to-r from-amber-500/10 to-pink-500/10 border border-amber-500/30 rounded-xl flex items-start gap-2">
+                <Key className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-100 flex-1">
+                  <strong>Análise com IA desativada.</strong> O app usará o parser local (menos preciso).
+                  <button onClick={() => setView('settings')} className="ml-2 underline text-amber-300">Configurar chave</button>
+                </div>
+              </div>
+            )}
+
             <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-500/20 via-blue-600/10 to-purple-600/20 border border-cyan-500/30 p-5 mb-3">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.15),transparent_60%)]" />
               <div className="relative flex items-start gap-4">
@@ -444,8 +519,10 @@ export default function App() {
                   </h2>
                   <p className="text-sm text-slate-300 mb-3">
                     {isProcessing
-                      ? 'Gemini AI → parser local → fallback'
-                      : 'Gemini AI analisa — funciona com qualquer imagem'}
+                      ? 'Aguarde — processando imagem'
+                      : aiEnabled
+                        ? 'Gemini AI analisa — depois você pode refinar no chat'
+                        : 'Parser local detecta paredes e cômodos'}
                   </p>
                   {!isProcessing && (
                     <>
@@ -453,22 +530,7 @@ export default function App() {
                         ref={fileInputRef}
                         type="file"
                         accept="image/*,.pdf"
-                        onChange={(e) => {
-                          handleFileUpload(e);
-                          // Salvar a imagem selecionada para o chat
-                          const f = e.target.files?.[0];
-                          if (f) {
-                            const reader = new FileReader();
-                            reader.onload = (ev) => {
-                              const dataUrl = ev.target?.result as string;
-                              if (typeof window !== 'undefined' && dataUrl) {
-                                window.localStorage.setItem('floorvision_last_image', dataUrl);
-                                setPendingImage(dataUrl);
-                              }
-                            };
-                            reader.readAsDataURL(f);
-                          }
-                        }}
+                        onChange={handleFileUpload}
                         className="hidden"
                         id="plant-upload"
                       />
@@ -513,6 +575,9 @@ export default function App() {
                       <div className="w-9 h-9 rounded-xl bg-slate-900/60 backdrop-blur flex items-center justify-center text-white [&>svg]:w-5 [&>svg]:h-5">
                         {card.icon}
                       </div>
+                      {card.key === 'aiChat' && aiEnabled && (
+                        <span className="px-1.5 py-0.5 bg-emerald-500/30 rounded-full text-[9px] font-bold text-emerald-300">IA</span>
+                      )}
                     </div>
                     <h3 className="font-bold text-sm text-white mb-0.5 leading-tight">
                       {card.title}
