@@ -9,7 +9,6 @@
  * API key is read from localStorage (user-configurable in Settings)
  */
 
-const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
 const STORAGE_KEY = 'floorvision_gemini_key';
 
 export interface Wall2D {
@@ -238,11 +237,37 @@ export class GeminiChat {
   }
 
   private async callApi(apiKey: string): Promise<string> {
+    // Try multiple models in case the primary is unavailable
+    const models = [
+      'gemini-flash-lite-latest',
+      'gemini-flash-latest',
+      'gemini-1.5-flash',
+    ];
+
+    let lastError: Error | null = null;
+    for (const model of models) {
+      try {
+        return await this.callApiWithModel(apiKey, model);
+      } catch (e: any) {
+        lastError = e;
+        // Se for erro de chave (400/401) ou spending cap (429), não tenta outros modelos
+        if (e.message?.includes('inválida') || e.message?.includes('esgotado')) {
+          throw e;
+        }
+        // Se for 404 ou 503, tenta o próximo modelo
+        continue;
+      }
+    }
+    throw lastError || new Error('Todos os modelos Gemini falharam');
+  }
+
+  private async callApiWithModel(apiKey: string, model: string): Promise<string> {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
-      const response = await fetch(API_URL, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -272,7 +297,10 @@ export class GeminiChat {
           throw new Error('Limite mensal do projeto esgotado. Aumente em ai.studio/spend ou crie projeto novo.');
         }
         if (response.status === 404) {
-          throw new Error('Modelo não disponível. Tente criar uma nova chave.');
+          throw new Error(`Modelo ${model} indisponível`);
+        }
+        if (response.status === 503) {
+          throw new Error(`Modelo ${model} sobrecarregado`);
         }
         throw new Error(msg);
       }
