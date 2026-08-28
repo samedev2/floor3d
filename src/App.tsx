@@ -49,11 +49,11 @@ const MODE_CARDS: ModeCard[] = [
   {
     key: 'aiChat',
     title: 'Chat com IA',
-    desc: 'Refine a planta com linguagem natural',
+    desc: 'Em breve',
     icon: <Bot />,
-    gradient: 'from-pink-500/30 to-purple-600/10',
-    border: 'border-pink-500/40',
-    available: true,
+    gradient: 'from-pink-500/20 to-purple-600/5',
+    border: 'border-pink-500/20',
+    available: false,
   },
   {
     key: 'viewer3D',
