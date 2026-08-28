@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Edges, TransformControls, Grid } from '@react-three/drei';
-import { 
-  Box, 
-  X, 
+import {
+  Box,
+  X,
   Loader2,
   Trash2,
   Grid3x3,
@@ -11,11 +11,12 @@ import {
   RotateCw,
   Layers,
 } from 'lucide-react';
-import { 
-  HAND_DRAWN_PLAN, 
+import {
+  HAND_DRAWN_PLAN,
   CASA_6X8_PLAN,
   StructuralPlan,
 } from '../floorplan/structuralIntelligence';
+import { useStore } from '../store';
 
 // ============================================
 // PRECISE BLOCKOUT SYSTEM
@@ -267,24 +268,49 @@ interface PreciseBlockoutEditorProps {
 }
 
 export function PreciseBlockoutEditor({ onClose }: PreciseBlockoutEditorProps) {
+  const { model3d } = useStore();
   const [view, setView] = useState<'upload' | 'editor'>('upload');
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
-  
+
   // Structure
   const [items, setItems] = useState<PrimitiveItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  
+
   // Transform
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | 'scale'>('translate');
   const [snapValue, setSnapValue] = useState(0.1);
-  
+
   // UI
   const [showGrid, setShowGrid] = useState(true);
   const [autoRotate, setAutoRotate] = useState(false);
   const [showProps, setShowProps] = useState(true);
-  
+
   const transformRef = useRef<any>(null);
+
+  // Se o store já tem dados, monta estrutura direto
+  useEffect(() => {
+    if (model3d && model3d.objects && model3d.objects.length > 0 && items.length === 0) {
+      const newItems: PrimitiveItem[] = model3d.objects.map((o: any) => {
+        let color = '#3B82F6';
+        if (o.type === 'wall') color = o.isExterior ? '#6B7280' : '#94A3B8';
+        else if (o.type === 'floor') color = '#1F2937';
+        else if (o.type === 'ceiling') color = '#1E293B';
+
+        return {
+          id: o.id,
+          type: o.type,
+          position: o.position,
+          rotation: o.rotation,
+          dimensions: o.dimensions,
+          color,
+          isSelected: false,
+        };
+      });
+      setItems(newItems);
+      setView('editor');
+    }
+  }, [model3d]);
 
   // ============================================
   // LOAD STRUCTURAL PLAN (genérico)

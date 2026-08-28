@@ -1,12 +1,12 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Edges } from '@react-three/drei';
-import { 
-  Upload, 
-  Eye, 
-  Box, 
-  Layers, 
-  RotateCw, 
+import {
+  Upload,
+  Eye,
+  Box,
+  Layers,
+  RotateCw,
   Maximize2,
   Home,
   X,
@@ -16,6 +16,7 @@ import {
 import { convertFileToImage } from '../lib/pdfConverter';
 import { floorPlanDetector } from '../floorplan/detector';
 import { reconstructionEngine } from '../geometry/reconstruction';
+import { useStore } from '../store';
 
 // ============================================
 // 3D WALL COMPONENT
@@ -132,19 +133,48 @@ interface FloorPlan3DViewerProps {
 }
 
 export function FloorPlan3DViewer({ onClose }: FloorPlan3DViewerProps) {
+  const { model3d } = useStore();
   const [view, setView] = useState<'upload' | 'viewer'>('upload');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState('');
-  
+
   const [floorPlan, setFloorPlan] = useState<any>(null);
   const [wallHeight, setWallHeight] = useState(2.8);
   const [showCeiling, setShowCeiling] = useState(true);
   const [showFloor, setShowFloor] = useState(true);
   const [visualizationMode, setVisualizationMode] = useState<'structure' | 'architectural' | 'wireframe'>('architectural');
   const [autoRotate, setAutoRotate] = useState(false);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Se o store já tem dados (vindo do App.tsx), usa direto
+  useEffect(() => {
+    if (model3d && model3d.objects && model3d.objects.length > 0) {
+      // Converte model3d do store para o formato do FloorPlan3DViewer
+      const wallObjects = model3d.objects.filter((o: any) => o.type === 'wall');
+      const fp = {
+        id: 'store',
+        walls: wallObjects.map((o: any) => ({
+          id: o.id,
+          start: {
+            x: o.position[0] - Math.cos(o.rotation[1]) * o.dimensions.length / 2,
+            y: o.position[2] - Math.sin(o.rotation[1]) * o.dimensions.length / 2,
+          },
+          end: {
+            x: o.position[0] + Math.cos(o.rotation[1]) * o.dimensions.length / 2,
+            y: o.position[2] + Math.sin(o.rotation[1]) * o.dimensions.length / 2,
+          },
+          thickness: o.dimensions.thickness,
+          isExterior: o.isExterior || false,
+          openings: [],
+        })),
+        rooms: model3d.rooms || [],
+      };
+      setFloorPlan(fp);
+      setView('viewer');
+    }
+  }, [model3d]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
