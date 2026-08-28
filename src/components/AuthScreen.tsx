@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Mail, Lock, LogIn, UserPlus, X, Loader2, AlertCircle, CheckCircle2, LogOut, Database, Settings as SettingsIcon } from 'lucide-react';
+import { Mail, Lock, LogIn, X, Loader2, AlertCircle, CheckCircle2, LogOut, Database, Settings as SettingsIcon } from 'lucide-react';
 import {
   getConfig, setConfig, getCurrentUser,
-  signIn, signUp, signOut, testConnection,
+  signIn, signOut, testConnection,
   type SupabaseConfig,
 } from '../lib/supabase';
 import { SettingsPanel } from './SettingsPanel';
@@ -15,7 +15,6 @@ interface AuthScreenProps {
 export function AuthScreen({ onClose, onAuthChange }: AuthScreenProps) {
   const [cfg, setCfg] = useState<SupabaseConfig | null>(getConfig());
   const [user, setUser] = useState<any>(null);
-  const [mode, setMode] = useState<'signin' | 'signup' | 'config'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,7 +22,6 @@ export function AuthScreen({ onClose, onAuthChange }: AuthScreenProps) {
   const [info, setInfo] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
-  // URL + key temporários (no modo config)
   const [tmpUrl, setTmpUrl] = useState(cfg?.url || '');
   const [tmpKey, setTmpKey] = useState(cfg?.anonKey || '');
   const [testing, setTesting] = useState(false);
@@ -47,22 +45,13 @@ export function AuthScreen({ onClose, onAuthChange }: AuthScreenProps) {
     setError(null);
     setInfo(null);
     try {
-      if (mode === 'signup') {
-        const { user, error } = await signUp(email, password);
-        if (error) {
-          setError(error);
-        } else if (user) {
-          setInfo('Conta criada! Verifique seu email para confirmar.');
-        }
+      const { user, error } = await signIn(email, password);
+      if (error) {
+        setError(error);
       } else {
-        const { user, error } = await signIn(email, password);
-        if (error) {
-          setError(error);
-        } else {
-          setUser(user);
-          onAuthChange?.(user);
-          setInfo('Login realizado!');
-        }
+        setUser(user);
+        onAuthChange?.(user);
+        setInfo('Login realizado!');
       }
     } catch (e: any) {
       setError(e.message);
@@ -86,7 +75,6 @@ export function AuthScreen({ onClose, onAuthChange }: AuthScreenProps) {
     }
     setConfig({ url: tmpUrl.trim(), anonKey: tmpKey.trim() });
     setCfg({ url: tmpUrl.trim(), anonKey: tmpKey.trim() });
-    setMode('signin');
     setError(null);
     setInfo('Configuração salva!');
 
@@ -203,17 +191,10 @@ export function AuthScreen({ onClose, onAuthChange }: AuthScreenProps) {
           {/* Config existe - mostrar login */}
           {cfg && !user && (
             <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-bold text-white">
-                  {mode === 'signup' ? 'Criar conta' : 'Entrar'}
-                </h2>
-                <button
-                  onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); }}
-                  className="text-xs text-cyan-400 underline"
-                >
-                  {mode === 'signin' ? 'Criar nova conta' : 'Já tenho conta'}
-                </button>
-              </div>
+              <h2 className="text-lg font-bold text-white mb-1">Entrar</h2>
+              <p className="text-xs text-slate-400 mb-4">
+                Use as credenciais criadas pelo administrador no Supabase.
+              </p>
 
               <div className="space-y-3">
                 <div className="relative">
@@ -232,7 +213,7 @@ export function AuthScreen({ onClose, onAuthChange }: AuthScreenProps) {
                     type="password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    placeholder="senha (min 6 caracteres)"
+                    placeholder="senha"
                     onKeyDown={e => e.key === 'Enter' && handleAuth()}
                     className="w-full pl-10 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500"
                   />
@@ -256,8 +237,6 @@ export function AuthScreen({ onClose, onAuthChange }: AuthScreenProps) {
                 >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : mode === 'signup' ? (
-                    <><UserPlus className="w-4 h-4" /> Criar conta</>
                   ) : (
                     <><LogIn className="w-4 h-4" /> Entrar</>
                   )}
