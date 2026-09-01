@@ -710,7 +710,9 @@ async function importPlanFile(file) {
   if (!file) return;
   // Imagem (foto/print/PDF exportado): deteccao automatica de paredes + editor
   // de tracado. Nao depende do servidor.
-  if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || "") || (file.type || "").startsWith("image/")) {
+  const isImg = /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || "")
+    || ((file.type || "").startsWith("image/") && !/svg/i.test(file.type || ""));
+  if (isImg && !/\.svg$/i.test(file.name || "")) {
     if (window.autoImportImage) { window.autoImportImage(file); return; }
     if (window.openTraceEditor) { window.openTraceEditor(file); return; }
     showToast("Editor de tracado ainda carregando, tente de novo em 1s.");

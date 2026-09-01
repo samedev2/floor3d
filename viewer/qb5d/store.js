@@ -43,19 +43,34 @@ export async function listPlans() {
   return r.json();
 }
 
+let _tableMissing = false;
+
 export async function savePlan({ id, name, source, meters_per_pixel, data }) {
-  if (!isEnabled()) return false;
-  const r = await fetch(REST, {
-    method: "POST",
-    headers: { ...headers(), Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({
-      id, name: name || id, source: source || "trace",
-      meters_per_pixel: meters_per_pixel ?? null, data,
-      updated_at: new Date().toISOString(),
-    }),
-  });
-  if (!r.ok) throw new Error(`save ${r.status}: ${(await r.text()).slice(0, 180)}`);
-  return true;
+  if (!isEnabled() || _tableMissing) return false;
+  let r;
+  try {
+    r = await fetch(REST, {
+      method: "POST",
+      headers: { ...headers(), Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({
+        id, name: name || id, source: source || "trace",
+        meters_per_pixel: meters_per_pixel ?? null, data,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+  } catch (e) {
+    console.warn("[QB5D store] save (rede):", e.message);
+    return false;
+  }
+  if (r.ok) return true;
+  const body = (await r.text().catch(() => "")).slice(0, 200);
+  if (r.status === 404 || body.includes("PGRST205")) {
+    _tableMissing = true;                     // avisa 1x, depois só console
+    console.warn("[QB5D store] tabela qb5d_plans ausente — plantas não serão salvas");
+    return false;
+  }
+  console.warn(`[QB5D store] save ${r.status}: ${body}`);
+  return false;
 }
 
 export async function updateCal(id, mpp) {

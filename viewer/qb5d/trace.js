@@ -108,7 +108,7 @@ function ensureScreen() {
     onchange: (e) => { S.openingWidth_cm = +e.target.value || 90; } });
 
   const tools = el("div", { id: "trace-tools" },
-    el("button", { class: "prim", style: "background:linear-gradient(135deg,#8b5cf6,#6d28d9)", onclick: runDetect },
+    el("button", { class: "prim", style: "background:linear-gradient(135deg,#8b5cf6,#6d28d9)", onclick: () => runDetect() },
       "🪄 Detectar paredes"),
     el("div", { class: "trow" },
       mkToolBtn("wall", "Parede"), mkToolBtn("door", "Porta"),
@@ -122,7 +122,7 @@ function ensureScreen() {
       "🪄 detecta as paredes sozinho (planta de traço sólido funciona melhor). " +
       "Parede: clique os cantos, Enter fecha. Vão: clique sobre a parede. " +
       "Escala: 2 pontos de medida conhecida. Botão do meio = mover; roda = zoom."),
-    el("button", { class: "prim", onclick: exportPlan }, "Gerar 3D →"));
+    el("button", { class: "prim", onclick: () => exportPlan() }, "Gerar 3D →"));
 
   const screen = el("div", { class: "screen", id: "screen-trace" },
     el("div", { class: "topbar" },
@@ -192,8 +192,13 @@ function loadImage(file, cb) {
 // encontradas como segmentos editáveis. `scaleImg` = imagem original (usada
 // para detectar em resolução maior que a exibida).
 function runDetect(imgOverride) {
-  const im = imgOverride || S.img;
-  if (!im) { status("Envie uma imagem antes de detectar."); return null; }
+  // só aceita imgOverride se for um HTMLImageElement de verdade (evita
+  // receber o objeto de evento de um onclick)
+  const im = (imgOverride instanceof HTMLImageElement) ? imgOverride : S.img;
+  if (!(im instanceof HTMLImageElement) || !im.naturalWidth) {
+    status("Carregando a imagem… tente 'Detectar' de novo em 1s.");
+    return null;
+  }
   status("Detectando paredes…");
   let res;
   try { res = detectFromImage(im); }
@@ -547,7 +552,11 @@ function exportPlan(opts = {}) {
 export function openTraceEditor(file) {
   ensureScreen();
   go("screen-trace");
-  if (file) loadImage(file);
-  else if (!S.img) pickFile();
+  if (file) {
+    // auto-detecta as paredes assim que a imagem carrega
+    loadImage(file, () => { runDetect(S.img); });
+  } else if (!S.img) {
+    pickFile();
+  }
 }
 window.openTraceEditor = openTraceEditor;
