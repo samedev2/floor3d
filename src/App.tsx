@@ -18,6 +18,7 @@ import {
   Calculator,
 } from 'lucide-react';
 import { FloorPlan3DViewer } from './components/FloorPlan3DViewer';
+import { StructuralBuildViewer } from './components/StructuralBuildViewer';
 import { PermissionHandler } from './components/PermissionHandler';
 import { PlantLibrary } from './components/PlantLibrary';
 import { GaussianSplattingViewer } from './components/GaussianSplattingViewer';
@@ -28,13 +29,15 @@ import { AuthScreen } from './components/AuthScreen';
 import { MaterialEstimate } from './components/MaterialEstimate';
 import { LoginGate, isDemoMode, exitDemoMode } from './components/LoginGate';
 import { useStore } from './store';
+import { buildQB5D } from './qb5d';
+import { HardHat } from 'lucide-react';
 import { geminiChat, hasApiKey, type GeminiFloorPlan } from './lib/geminiChat';
 import { usePlantImport } from './lib/usePlantImport';
 import { planToModel3D, planToFloorPlan } from './lib/plantImportCore';
 import { Lock, LogOut } from 'lucide-react';
 import './App.css';
 
-type ViewKey = 'viewer3D' | 'precise' | 'library' | 'gaussian' | 'aiChat' | 'settings' | 'auth' | 'materials';
+type ViewKey = 'viewer3D' | 'structure' | 'precise' | 'library' | 'gaussian' | 'aiChat' | 'settings' | 'auth' | 'materials';
 
 interface ModeCard {
   key: ViewKey;
@@ -72,6 +75,15 @@ const MODE_CARDS: ModeCard[] = [
     icon: <Calculator />,
     gradient: 'from-orange-500/30 to-amber-600/10',
     border: 'border-orange-500/40',
+    available: true,
+  },
+  {
+    key: 'structure',
+    title: 'Estrutura Real (QB5D)',
+    desc: 'Obra da fundação ao acabamento',
+    icon: <HardHat />,
+    gradient: 'from-amber-500/30 to-orange-600/10',
+    border: 'border-amber-500/40',
     available: true,
   },
   {
@@ -116,6 +128,8 @@ export default function App() {
     setModel3d,
     setCapturedImage,
     processedPlan,
+    setQb5dModel,
+    bumpQb5dPlayback,
   } = useStore();
 
   // Check if API key exists
@@ -154,6 +168,15 @@ export default function App() {
       setProcessedPlan(floorPlan);
       setModel3d(model3d);
       setCapturedImage(result.imageDataUrl);
+      // QB5D: estruturação semântica realista da planta importada
+      try {
+        const qb = buildQB5D(result.plan as any, { pavimentos: 1 });
+        setQb5dModel(qb);
+        bumpQb5dPlayback();
+      } catch (err) {
+        console.error('QB5D falhou:', err);
+        setQb5dModel(null);
+      }
     },
     onError: () => {
       // erro já é mostrado via importError state
@@ -172,9 +195,10 @@ export default function App() {
   const handleReset = useCallback(() => {
     setProcessedPlan(null);
     setModel3d(null);
+    setQb5dModel(null);
     setCapturedImage(null);
     geminiChat.reset();
-  }, [setProcessedPlan, setModel3d, setCapturedImage]);
+  }, [setProcessedPlan, setModel3d, setQb5dModel, setCapturedImage]);
 
   // Aplica um plano vindo do GeminiChatPanel (mesma lógica do hook)
   const applyPlanFromChat = useCallback((plan: GeminiFloorPlan) => {
@@ -182,7 +206,16 @@ export default function App() {
     const floorPlan = planToFloorPlan(plan);
     setProcessedPlan(floorPlan);
     setModel3d(model3d);
-  }, [setProcessedPlan, setModel3d]);
+    // QB5D: estruturação semântica realista do plano vindo do chat
+    try {
+      const qb = buildQB5D(plan, { pavimentos: 1 });
+      setQb5dModel(qb);
+      bumpQb5dPlayback();
+    } catch (err) {
+      console.error('QB5D falhou:', err);
+      setQb5dModel(null);
+    }
+  }, [setProcessedPlan, setModel3d, setQb5dModel, bumpQb5dPlayback]);
 
   // Helper: pendingImage vem do lastResult do hook
   const pendingImage = lastResult?.imageDataUrl ?? null;
@@ -204,6 +237,7 @@ export default function App() {
 
   // Routers
   if (view === 'viewer3D') return <FloorPlan3DViewer onClose={() => setView(null)} />;
+  if (view === 'structure') return <StructuralBuildViewer onClose={() => setView(null)} />;
   if (view === 'library') return <PlantLibrary onClose={() => setView(null)} />;
   if (view === 'gaussian') return <GaussianSplattingViewer onClose={() => setView(null)} />;
   if (view === 'precise') return <PreciseBlockoutEditor onClose={() => setView(null)} />;
