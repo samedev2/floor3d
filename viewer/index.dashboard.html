@@ -373,11 +373,17 @@ const PLAN_ORDER = ["1191", "4068", "3676"];
       </div>
       <div class="ic-body">
         <h2>Importar Planta 2D</h2>
-        <p>Parser local analisa — sem servidor de inferência rodando nesta versão offline.</p>
-        <button class="pill-btn" id="btn-import">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Escolher arquivo
-        </button>
+        <p id="import-hint">Dois caminhos: <b>SVG</b> (formato CubiCasa5K) passa pela detecção automática do modelo; <b>foto / imagem</b> (JPG, PNG, PDF exportado como imagem) abre o editor de traçado, onde você desenha as paredes e define a escala. Os dois alimentam o Visualizador 360 e o QB5D.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="pill-btn" id="btn-import">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            SVG — detecção automática
+          </button>
+          <button class="pill-btn" id="btn-import-trace" style="background:linear-gradient(135deg,#10b981,#047857)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+            Foto / imagem — traçar
+          </button>
+        </div>
         <input type="file" id="file-input" accept=".svg,.png,.jpg,.jpeg,.webp" hidden>
       </div>
     </div>
@@ -628,7 +634,12 @@ document.getElementById("btn-reset-home").addEventListener("click", () => {
 });
 
 document.getElementById("btn-import").addEventListener("click", () => {
-  document.getElementById("file-input").click();
+  const fi = document.getElementById("file-input");
+  fi.setAttribute("accept", ".svg"); fi.click();
+});
+document.getElementById("btn-import-trace").addEventListener("click", () => {
+  if (window.openTraceEditor) window.openTraceEditor();
+  else showToast("Editor de tracado ainda carregando, tente de novo em 1s.");
 });
 document.getElementById("file-input").addEventListener("change", () => {
   const f = document.getElementById("file-input");
@@ -689,8 +700,8 @@ let LIVE = false;
     if (fi) fi.setAttribute("accept", ".svg");
     const badge = document.querySelector("#screen-home .demo-badge");
     if (badge) badge.textContent = "LIVE";
-    const p = document.querySelector(".import-card p");
-    if (p) p.textContent = "Servidor conectado — envie um SVG (formato CubiCasa5K) e o modelo analisa a planta.";
+    const p = document.getElementById("import-hint");
+    if (p) p.innerHTML = "Servidor conectado — <b>SVG</b> (CubiCasa5K) passa pela deteccao automatica; <b>foto / imagem</b> abre o editor de tracado. Ambos alimentam o 360 e o QB5D.";
   }
 })();
 
