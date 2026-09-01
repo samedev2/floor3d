@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import base64
+import io
+import json
+import math
 import os
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -174,3 +178,220 @@ async def extract(svg: UploadFile = File(...)) -> dict:
         return _attach_input_image(tmp_path, result)
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Gemini vision detection — turn a RASTER floor plan (photo / PNG / JPG) into
+# the same polygon JSON the CubiCasa model emits. The trained model only reads
+# CubiCasa-format SVG; this path handles everything else (and can read the
+# drawing's dimension labels to recover a real metric scale).
+#
+# The API key is NOT committed: it comes from $GEMINI_API_KEY or the
+# git-ignored file server/gemini_key.txt.
+# ---------------------------------------------------------------------------
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+
+_GEMINI_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "image_width": {"type": "integer"},
+        "image_height": {"type": "integer"},
+        "wall_thickness_px": {"type": "number"},
+        "walls": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "x1": {"type": "number"}, "y1": {"type": "number"},
+                    "x2": {"type": "number"}, "y2": {"type": "number"},
+                },
+                "required": ["x1", "y1", "x2", "y2"],
+            },
+        },
+        "doors": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"}, "y": {"type": "number"},
+                    "width_px": {"type": "number"},
+                },
+                "required": ["x", "y"],
+            },
+        },
+        "windows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"}, "y": {"type": "number"},
+                    "width_px": {"type": "number"},
+                },
+                "required": ["x", "y"],
+            },
+        },
+        "scale": {
+            "type": "object",
+            "properties": {
+                "px_per_meter": {"type": "number"},
+                "note": {"type": "string"},
+            },
+        },
+    },
+    "required": ["image_width", "image_height", "walls"],
+}
+
+_GEMINI_PROMPT = (
+    "You are analysing an architectural floor plan image. Return ONLY JSON "
+    "matching the schema.\n"
+    "- walls: the CENTRELINE of every wall as a straight segment "
+    "(x1,y1)-(x2,y2) in image pixel coordinates, origin at the top-left. "
+    "Split walls at junctions. Include interior partitions and exterior "
+    "walls. Ignore furniture, text, dimension lines/arrows, hatching and "
+    "plumbing fixtures.\n"
+    "- wall_thickness_px: typical wall thickness in pixels.\n"
+    "- doors / windows: the centre point (x,y) of the opening on its wall "
+    "and the opening width in pixels.\n"
+    "- scale.px_per_meter: if the drawing shows dimension labels (e.g. "
+    "'3.00', '2,55 m', '6x8'), use them to compute how many pixels equal "
+    "one metre. Omit scale entirely if no reliable dimension is visible.\n"
+    "All coordinates must lie inside the image bounds."
+)
+
+
+def _gemini_key() -> str | None:
+    k = os.environ.get("GEMINI_API_KEY")
+    if k and k.strip():
+        return k.strip()
+    kf = REPO_ROOT / "server" / "gemini_key.txt"
+    if kf.exists():
+        t = kf.read_text(encoding="utf-8").strip()
+        return t or None
+    return None
+
+
+def _wall_rect(x1: float, y1: float, x2: float, y2: float, ht: float) -> list[list[float]]:
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy) or 1.0
+    px, py = -dy / length * ht, dx / length * ht
+    return [
+        [x1 + px, y1 + py], [x2 + px, y2 + py],
+        [x2 - px, y2 - py], [x1 - px, y1 - py],
+    ]
+
+
+def _ai_to_result(parsed: dict, w: int, h: int, raw: bytes, mime: str) -> dict:
+    thk = parsed.get("wall_thickness_px")
+    try:
+        thk = float(thk)
+    except (TypeError, ValueError):
+        thk = 0.0
+    if thk <= 0:
+        thk = max(4.0, min(w, h) * 0.012)
+    half = max(2.0, thk / 2.0)
+
+    walls: list[dict] = []
+    for wl in parsed.get("walls") or []:
+        try:
+            x1, y1, x2, y2 = float(wl["x1"]), float(wl["y1"]), float(wl["x2"]), float(wl["y2"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.hypot(x2 - x1, y2 - y1) < 3:
+            continue
+        walls.append({"outer": _wall_rect(x1, y1, x2, y2, half), "holes": []})
+
+    def _openings(items) -> list[dict]:
+        out: list[dict] = []
+        for o in items or []:
+            try:
+                x, y = float(o["x"]), float(o["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            try:
+                wpx = float(o.get("width_px"))
+            except (TypeError, ValueError):
+                wpx = thk * 5.0
+            if wpx <= 0:
+                wpx = thk * 5.0
+            out.append({"outer": _wall_rect(x - wpx / 2, y, x + wpx / 2, y, half), "holes": []})
+        return out
+
+    result = {
+        "canvas_size": [w, h],
+        "content_rect": [0, 0, w, h],
+        "polygons": {
+            "wall": walls,
+            "door": _openings(parsed.get("doors")),
+            "window": _openings(parsed.get("windows")),
+        },
+        "input_image_b64": base64.b64encode(raw).decode("ascii"),
+    }
+    scale = parsed.get("scale") or {}
+    try:
+        ppm = float(scale.get("px_per_meter"))
+    except (TypeError, ValueError):
+        ppm = 0.0
+    if ppm > 0:
+        result["meters_per_pixel"] = 1.0 / ppm
+        result["scale_note"] = str(scale.get("note") or "")
+    return result
+
+
+@app.post("/detect-ai")
+async def detect_ai(image: UploadFile = File(...)) -> dict:
+    """Detect walls/openings/scale in a raster floor plan via Gemini vision."""
+    key = _gemini_key()
+    if not key:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY não configurada no servidor")
+
+    raw = await image.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty upload")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"upload exceeds {MAX_UPLOAD_BYTES} bytes")
+
+    from PIL import Image as _PILImage
+
+    try:
+        im = _PILImage.open(io.BytesIO(raw))
+        w, h = im.size
+        mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}.get(
+            im.format or "", "image/png"
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"imagem inválida: {e}") from e
+
+    body = {
+        "contents": [{"parts": [
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(raw).decode("ascii")}},
+            {"text": _GEMINI_PROMPT + f"\nThe image is {w}x{h} pixels."},
+        ]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": _GEMINI_SCHEMA,
+            "temperature": 0.1,
+        },
+    }
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={key}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(url, json=body)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=504, detail=f"Gemini inacessível: {e}") from e
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Gemini {resp.status_code}: {resp.text[:300]}")
+
+    try:
+        payload = resp.json()
+        text = payload["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(text)
+    except (KeyError, IndexError, ValueError) as e:
+        raise HTTPException(status_code=502, detail=f"resposta do Gemini inválida: {e}") from e
+
+    result = _ai_to_result(parsed, w, h, raw, mime)
+    if not result["polygons"]["wall"]:
+        raise HTTPException(status_code=422, detail="Gemini não encontrou paredes nesta imagem")
+    return result

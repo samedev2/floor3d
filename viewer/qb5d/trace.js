@@ -210,15 +210,65 @@ function runDetect(imgOverride) {
   return res;
 }
 
-// Fluxo "automático": carrega imagem -> detecta -> se achou parede suficiente,
-// já gera o 3D (escala PROVISÓRIA); senão abre o editor pré-preenchido.
-export function autoImportImage(file) {
+// Registra o resultado do servidor (Gemini) como planta pronta.
+function finishServerImport(file, data) {
+  const host = window.__QB5D_HOST;
+  const key = "ai-" + Date.now().toString(36);
+  const name = (file.name || "Planta IA").replace(/\.[^.]+$/, "").slice(0, 40) || "Planta IA";
+  const hasScale = !!(data.meters_per_pixel && data.meters_per_pixel > 0);
+  (host?.demos || {})[key] = data;
+  (host?.planMeta || {})[key] = { name, tag: hasScale ? "IA" : "IA sem escala" };
+  (host?.planOrder || []).push(key);
+  if (hasScale) { try { setByScale100(key, data.meters_per_pixel * 100); } catch {} }
+  try { window.updateHomeBanner && window.updateHomeBanner(); } catch {}
+  try { window.renderLibrary && window.renderLibrary(); } catch {}
+  try { window.__QB5D_selectPlan && window.__QB5D_selectPlan(key); } catch {}
+  if (window.__PLAN_STORE && window.__PLAN_STORE.isEnabled()) {
+    window.__PLAN_STORE.savePlan({
+      id: key, name, source: "gemini",
+      meters_per_pixel: hasScale ? data.meters_per_pixel : null, data,
+    }).catch(() => {});
+  }
+  const nW = (data.polygons.wall || []).length;
+  const nD = (data.polygons.door || []).length;
+  const nJ = (data.polygons.window || []).length;
+  if (window.openViewer) window.openViewer(key); else go("screen-viewer");
+  setTimeout(() => {
+    const s = hasScale
+      ? ` · escala lida das cotas (${(1 / data.meters_per_pixel).toFixed(0)} px/m).`
+      : ` · SEM escala visível — abra "Traçar Planta" e use a ferramenta Escala.`;
+    window.showToast && window.showToast(`IA: ${nW} paredes, ${nD} portas, ${nJ} janelas${s}`, 8000);
+  }, 400);
+}
+
+// Fluxo "automático": tenta o Gemini no servidor (lê inclusive a escala das
+// cotas); se falhar/servidor fora, cai na detecção local (escala provisória).
+export async function autoImportImage(file) {
   ensureScreen();
-  loadImage(file, (im) => {
-    const res = runDetect(im);
+  if (window.showToast) window.showToast("Analisando a planta com IA (Gemini)…", 90000);
+  try {
+    const fd = new FormData();
+    fd.append("image", file);
+    const r = await fetch("/detect-ai", { method: "POST", body: fd });
+    if (r.ok) {
+      const data = await r.json();
+      if ((data.polygons && data.polygons.wall || []).length >= 3) {
+        finishServerImport(file, data);
+        return;
+      }
+    } else if (r.status !== 503) {
+      const d = await r.json().catch(() => ({}));
+      if (window.showToast) {
+        window.showToast("IA falhou (" + (d.detail || r.status) + ") — usando detecção local.", 4500);
+      }
+    }
+  } catch { /* servidor fora — fallback local */ }
+
+  // fallback: visão computacional clássica no navegador
+  loadImage(file, () => {
+    const res = runDetect(S.img);
     const n = res ? (res.polygons.wall || []).length : 0;
     if (n >= 4) {
-      // escala provisória: assume ~10 m na maior dimensão do traçado
       let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
       for (const w of S.walls) for (const p of [w.a, w.b]) {
         minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);

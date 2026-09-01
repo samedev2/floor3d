@@ -57,3 +57,7 @@ runpod_setup.sh
 
 # Self-zip of the repo that shipped alongside it (redundant, ~7 MB)
 LICENSE.zip
+
+# Google Gemini API key — local only, never commit
+server/gemini_key.txt
+**/gemini_key.txt
