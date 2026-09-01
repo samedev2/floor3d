@@ -75,6 +75,18 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _no_stale_assets(request, call_next):
+    """The viewer is plain ES modules served static — without this, browsers
+    cache them by URL and users run stale code after an update. Force a
+    revalidation on every HTML/JS/JSON asset."""
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.startswith(("/qb5d/", "/demos/", "/classic")):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     extractor: PolygonExtractor = app.state.extractor

@@ -383,6 +383,10 @@ const PLAN_ORDER = ["1191", "4068", "3676"];
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
             Foto / imagem — traçar
           </button>
+          <button class="pill-btn" id="btn-import-clean" style="background:linear-gradient(135deg,#0ea5e9,#0369a1)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21l6-6"/><path d="M14 4l6 6-9 9H5v-6z"/></svg>
+            Limpar fundo do JPEG
+          </button>
         </div>
         <input type="file" id="file-input" accept=".svg,.png,.jpg,.jpeg,.webp" hidden>
       </div>
@@ -643,6 +647,18 @@ document.getElementById("btn-import-trace").addEventListener("click", () => {
   if (window.openTraceEditor) window.openTraceEditor();
   else showToast("Editor de tracado ainda carregando, tente de novo em 1s.");
 });
+const cleanInput = document.createElement("input");
+cleanInput.type = "file";
+cleanInput.accept = "image/*";
+cleanInput.style.display = "none";
+document.body.appendChild(cleanInput);
+cleanInput.addEventListener("change", () => {
+  const f = cleanInput.files[0]; cleanInput.value = "";
+  if (!f) return;
+  if (window.cleanPlanImage) window.cleanPlanImage(f);
+  else showToast("Limpador ainda carregando, tente de novo em 1s.");
+});
+document.getElementById("btn-import-clean").addEventListener("click", () => cleanInput.click());
 document.getElementById("file-input").addEventListener("change", () => {
   const f = document.getElementById("file-input");
   if (f.files.length) { importPlanFile(f.files[0]); f.value = ""; return; }

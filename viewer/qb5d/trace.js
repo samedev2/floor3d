@@ -9,7 +9,7 @@
 // =====================================================================
 
 import { setByScale100 } from "./calibration.js";
-import { detectFromImage } from "./detect.js";
+import { detectFromImage, cleanPlan } from "./detect.js";
 
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
@@ -24,7 +24,7 @@ const el = (tag, attrs = {}, ...kids) => {
 };
 
 const S = {
-  img: null, imgW: 0, imgH: 0, imgB64: "",
+  img: null, imgW: 0, imgH: 0, imgB64: "", imgDataURL: "",
   walls: [],      // { a:{x,y}, b:{x,y} }  em px da imagem
   openings: [],   // { wall:index, t:0..1, width_px, kind:'door'|'window' }
   wallThickness_cm: 15,
@@ -116,8 +116,12 @@ function ensureScreen() {
   const totalWBtn = el("button", { onclick: () => scaleFromTotalWidth(+totalWIn.value || 0) }, "aplicar");
 
   const tools = el("div", { id: "trace-tools" },
-    el("button", { class: "prim", style: "background:linear-gradient(135deg,#8b5cf6,#6d28d9)", onclick: () => runDetect() },
-      "🪄 Detectar paredes"),
+    el("div", { class: "trow" },
+      el("button", { class: "prim", style: "flex:1;background:linear-gradient(135deg,#8b5cf6,#6d28d9)", onclick: () => runDetect() },
+        "🪄 Detectar paredes"),
+      el("button", { class: "prim", style: "background:linear-gradient(135deg,#0ea5e9,#0369a1)",
+        title: "Remove fundo/sombra/textura e deixa só os traços da planta", onclick: () => cleanBackdrop() },
+        "🧹 Limpar fundo")),
     el("div", { class: "trow" },
       mkToolBtn("wall", "Parede"), mkToolBtn("door", "Porta"),
       mkToolBtn("window", "Janela")),
@@ -145,6 +149,7 @@ function ensureScreen() {
         el("div", { class: "t1" }, "Traçar Planta"),
         el("div", { class: "t2" }, "Desenhe as paredes sobre a foto")),
       el("div", { class: "topbar-spacer" }),
+      el("button", { class: "icon-btn", title: "Baixar imagem limpa (PNG)", onclick: () => downloadBackdrop() }, "⬇"),
       el("button", { class: "icon-btn", title: "Trocar imagem", onclick: pickFile }, "🖼")),
     canvas, tools, statusEl);
   document.body.append(screen);
@@ -219,7 +224,8 @@ function loadImage(file, cb) {
   const rd = new FileReader();
   rd.onload = () => {
     const url = rd.result;
-    S.imgB64 = String(url).split(",")[1] || "";
+    S.imgDataURL = String(url);
+    S.imgB64 = S.imgDataURL.split(",")[1] || "";
     const im = new Image();
     im.onload = () => {
       S.img = im; S.imgW = im.naturalWidth; S.imgH = im.naturalHeight;
@@ -291,6 +297,57 @@ function finishServerImport(file, data) {
     window.showToast && window.showToast(`IA: ${nW} paredes, ${nD} portas, ${nJ} janelas${s}`, 8000);
   }, 400);
 }
+
+// Limpa o fundo da imagem atual (remove sombra/textura/preenchimento e
+// deixa só os traços funcionais) e usa o resultado como base do editor.
+function cleanBackdrop() {
+  if (!(S.img instanceof HTMLImageElement) || !S.img.naturalWidth) {
+    status("Carregue uma imagem antes de limpar.");
+    return;
+  }
+  status("Limpando fundo — isolando os traços…");
+  let res;
+  try { res = cleanPlan(S.img, { transparent: false }); }
+  catch (e) { status("Falha ao limpar: " + e.message); return; }
+  const im = new Image();
+  im.onload = () => {
+    S.img = im; S.imgW = im.naturalWidth; S.imgH = im.naturalHeight;
+    S.imgDataURL = res.dataURL;
+    S.imgB64 = res.dataURL.split(",")[1] || "";
+    S.walls = []; S.openings = [];
+    if (canvas) { resize(); fitView(); }
+    status(`Fundo removido (${res.inkPct}% de traço). Rode "Detectar paredes" e defina a escala.`);
+    runDetect(im);
+  };
+  im.src = res.dataURL;
+}
+
+function downloadBackdrop() {
+  if (!S.imgDataURL) { status("Nenhuma imagem carregada."); return; }
+  const a = document.createElement("a");
+  a.href = S.imgDataURL;
+  const ext = /^data:image\/(\w+)/.exec(S.imgDataURL)?.[1] || "png";
+  a.download = (S.planName || "planta") + "-limpa." + ext;
+  a.click();
+}
+
+// Entrada pelo botão da home: abre o editor já limpando a imagem enviada.
+export function cleanPlanImage(file) {
+  ensureScreen();
+  go("screen-trace");
+  if (file) {
+    loadImage(file, () => cleanBackdrop());
+  } else {
+    pickFile();
+    const t = setInterval(() => {
+      if (S.img instanceof HTMLImageElement && S.img.naturalWidth) {
+        clearInterval(t); cleanBackdrop();
+      }
+    }, 200);
+    setTimeout(() => clearInterval(t), 20000);
+  }
+}
+window.cleanPlanImage = cleanPlanImage;
 
 // Fluxo "automático": tenta o Gemini no servidor (lê inclusive a escala das
 // cotas); se falhar/servidor fora, cai na detecção local (escala provisória).

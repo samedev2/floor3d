@@ -12,6 +12,124 @@
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+// =====================================================================
+// LIMPEZA DE FUNDO — isola os traços funcionais da planta
+// Foto/JPEG com sombra, textura de papel, grade, preenchimentos coloridos
+//  -> desenho limpo: fundo branco, só as linhas em preto.
+// Pipeline: cinza -> limiar ADAPTATIVO (Bradley, corrige sombra/gradiente)
+//  -> remove respingos pequenos -> fecha micro-falhas.
+// Retorna { canvas, dataURL, inkPct }.
+// =====================================================================
+export function cleanPlan(img, opts = {}) {
+  const maxDim = opts.maxDim || 2000;
+  const { data, w, h } = imageToData(img, maxDim);
+  const N = w * h;
+  const gray = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const r = data.data[i * 4], g = data.data[i * 4 + 1], b = data.data[i * 4 + 2];
+    gray[i] = r * 0.299 + g * 0.587 + b * 0.114;
+  }
+
+  // imagem integral p/ média de janela em O(1)
+  const S = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let rs = 0;
+    for (let x = 0; x < w; x++) {
+      rs += gray[y * w + x];
+      S[(y + 1) * (w + 1) + (x + 1)] = S[y * (w + 1) + (x + 1)] + rs;
+    }
+  }
+  const win = Math.max(8, Math.round(Math.min(w, h) / 16)); // ~1/16 da menor dimensão
+  const half = win >> 1;
+  const T = opts.tPercent != null ? opts.tPercent : 0.86; // pixel é tinta se < média*T
+  const ink = new Uint8Array(N);
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - half), y1 = Math.min(h - 1, y + half);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - half), x1 = Math.min(w - 1, x + half);
+      const area = (x1 - x0 + 1) * (y1 - y0 + 1);
+      const sum = S[(y1 + 1) * (w + 1) + (x1 + 1)] - S[y0 * (w + 1) + (x1 + 1)]
+        - S[(y1 + 1) * (w + 1) + x0] + S[y0 * (w + 1) + x0];
+      const mean = sum / area;
+      if (gray[y * w + x] < mean * T) ink[y * w + x] = 1;
+    }
+  }
+
+  // se marcou quase tudo como tinta (fundo escuro / invertido), inverte
+  let inkCount = 0;
+  for (let i = 0; i < N; i++) inkCount += ink[i];
+  if (inkCount > N * 0.55) for (let i = 0; i < N; i++) ink[i] ^= 1;
+
+  // remove respingos: componentes conexos abaixo de minArea
+  const minArea = opts.minSpeck != null ? opts.minSpeck : Math.max(6, Math.round(N * 0.00003));
+  const lab = new Int32Array(N);
+  let next = 1;
+  const stack = [];
+  for (let s0 = 0; s0 < N; s0++) {
+    if (!ink[s0] || lab[s0]) continue;
+    const id = next++;
+    stack.length = 0; stack.push(s0); lab[s0] = id;
+    const cells = [];
+    while (stack.length) {
+      const i = stack.pop(); cells.push(i);
+      const x = i % w, y = (i / w) | 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const j = ny * w + nx;
+        if (ink[j] && !lab[j]) { lab[j] = id; stack.push(j); }
+      }
+    }
+    if (cells.length < minArea) for (const i of cells) ink[i] = 0;
+  }
+
+  // fecha micro-falhas (dilata + erode 1px)
+  const dil = new Uint8Array(ink);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (ink[y * w + x]) continue;
+    let on = 0;
+    for (let dy = -1; dy <= 1 && !on; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < w && ny < h && ink[ny * w + nx]) { on = 1; break; }
+    }
+    if (on) dil[y * w + x] = 1;
+  }
+  const clean = new Uint8Array(dil);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!dil[y * w + x]) continue;
+    let off = 0;
+    for (let dy = -1; dy <= 1 && !off; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h || !dil[ny * w + nx]) { off = 1; break; }
+    }
+    if (off && !ink[y * w + x]) clean[y * w + x] = 0;
+  }
+
+  // desenha: fundo branco (ou transparente), traço preto
+  const outCv = document.createElement("canvas");
+  outCv.width = w; outCv.height = h;
+  const octx = outCv.getContext("2d");
+  const outImg = octx.createImageData(w, h);
+  const transparent = !!opts.transparent;
+  let finalInk = 0;
+  for (let i = 0; i < N; i++) {
+    const on = clean[i];
+    if (on) finalInk++;
+    const k = i * 4;
+    if (on) { outImg.data[k] = outImg.data[k + 1] = outImg.data[k + 2] = 17; outImg.data[k + 3] = 255; }
+    else if (transparent) { outImg.data[k + 3] = 0; }
+    else { outImg.data[k] = outImg.data[k + 1] = outImg.data[k + 2] = 255; outImg.data[k + 3] = 255; }
+  }
+  octx.putImageData(outImg, 0, 0);
+  return {
+    canvas: outCv,
+    dataURL: outCv.toDataURL("image/png"),
+    inkPct: +(100 * finalInk / N).toFixed(2),
+    size: [w, h],
+  };
+}
+
 // ---------- carregar imagem em ImageData (com downscale) ----------
 export function imageToData(img, maxDim = 1100) {
   const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
