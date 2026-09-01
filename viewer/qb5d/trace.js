@@ -29,7 +29,9 @@ const S = {
   openings: [],   // { wall:index, t:0..1, width_px, kind:'door'|'window' }
   wallThickness_cm: 15,
   openingWidth_cm: 90,
-  pxPerM: null,    // escala
+  pxPerM: null,    // escala (px por metro)
+  scaleMeters: 0,  // valor digitado no campo "quantos metros o traço mede"
+  scaleLine: null, // [{x,y},{x,y}] traço de referência marcado
   tool: "wall",
   draft: [],       // pontos da polilinha em construção
   scalePts: [],
@@ -106,6 +108,12 @@ function ensureScreen() {
     onchange: (e) => { S.wallThickness_cm = +e.target.value || 15; } });
   const widthIn = el("input", { type: "number", value: String(S.openingWidth_cm), min: "40", step: "5",
     onchange: (e) => { S.openingWidth_cm = +e.target.value || 90; } });
+  const scaleMIn = el("input", {
+    type: "number", min: "0.1", step: "0.05", placeholder: "metros",
+    oninput: (e) => { S.scaleMeters = +e.target.value || 0; recomputeScale(); },
+  });
+  const totalWIn = el("input", { type: "number", min: "1", step: "0.1", placeholder: "m" });
+  const totalWBtn = el("button", { onclick: () => scaleFromTotalWidth(+totalWIn.value || 0) }, "aplicar");
 
   const tools = el("div", { id: "trace-tools" },
     el("button", { class: "prim", style: "background:linear-gradient(135deg,#8b5cf6,#6d28d9)", onclick: () => runDetect() },
@@ -116,12 +124,17 @@ function ensureScreen() {
     el("div", { class: "trow" },
       mkToolBtn("scale", "Escala"), mkToolBtn("erase", "Apagar"),
       el("button", { onclick: undo }, "Desfazer")),
+    el("label", {}, "Escala — quantos metros o traço mede", scaleMIn),
+    el("div", { class: "trow", style: "align-items:center" },
+      el("span", { style: "font-size:10.5px;color:rgba(255,255,255,.55)" }, "ou largura total da planta:"),
+      totalWIn, totalWBtn),
     el("label", {}, "Espessura parede (cm)", thickIn),
     el("label", {}, "Largura do vão (cm)", widthIn),
     el("div", { class: "hint" },
-      "🪄 detecta as paredes sozinho (planta de traço sólido funciona melhor). " +
-      "Parede: clique os cantos, Enter fecha. Vão: clique sobre a parede. " +
-      "Escala: 2 pontos de medida conhecida. Botão do meio = mover; roda = zoom."),
+      "1) Detectar ou desenhar as paredes. 2) Escala: clique \"Escala\", clique 2 pontos " +
+      "de uma medida conhecida e digite os metros no campo acima — ou preencha a largura " +
+      "total da planta e \"aplicar\". 3) Gerar 3D.",
+    ),
     el("button", { class: "prim", onclick: () => exportPlan() }, "Gerar 3D →"));
 
   const screen = el("div", { class: "screen", id: "screen-trace" },
@@ -153,7 +166,39 @@ function setTool(t) {
   S.tool = t;
   S.draft = []; S.scalePts = [];
   for (const [k, b] of Object.entries(toolBtns)) b.classList.toggle("on", k === t);
-  status();
+  if (t === "scale") {
+    status("Escala: clique 2 pontos de uma medida que você conhece na imagem, "
+      + "depois digite quantos metros ela tem no campo \"Escala\".");
+  } else {
+    status();
+  }
+}
+
+// recalcula a escala a partir do traço marcado + metros digitados
+function recomputeScale() {
+  if (S.scaleLine && S.scaleLine.length === 2 && S.scaleMeters > 0) {
+    const px = dist(S.scaleLine[0], S.scaleLine[1]);
+    if (px > 1) {
+      S.pxPerM = px / S.scaleMeters;
+      status(`Escala definida: 1 m = ${S.pxPerM.toFixed(1)} px. Já pode "Gerar 3D".`);
+    }
+  }
+}
+
+// escala pela largura total da planta (bbox das paredes)
+function scaleFromTotalWidth(m) {
+  if (!(m > 0)) { status("Digite a largura total da planta, em metros."); return; }
+  finishWall();
+  if (!S.walls.length) { status("Detecte ou desenhe as paredes primeiro."); return; }
+  let minX = 1e9, maxX = -1e9;
+  for (const w of S.walls) for (const p of [w.a, w.b]) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+  }
+  const span = maxX - minX;
+  if (span > 1) {
+    S.pxPerM = span / m;
+    status(`Escala pela largura total: 1 m = ${S.pxPerM.toFixed(1)} px. Já pode "Gerar 3D".`);
+  }
 }
 
 function status(msg) {
@@ -179,7 +224,8 @@ function loadImage(file, cb) {
     im.onload = () => {
       S.img = im; S.imgW = im.naturalWidth; S.imgH = im.naturalHeight;
       S.planName = (file.name || "Planta traçada").replace(/\.[^.]+$/, "").slice(0, 40) || "Planta traçada";
-      S.walls = []; S.openings = []; S.pxPerM = null; S.draft = []; S.scalePts = [];
+      S.walls = []; S.openings = []; S.pxPerM = null; S.draft = [];
+      S.scalePts = []; S.scaleLine = null; S.scaleMeters = 0;
       if (canvas) { resize(); fitView(); status(); }
       if (cb) cb(im);
     };
@@ -363,10 +409,12 @@ function handleClick(p) {
   } else if (S.tool === "scale") {
     S.scalePts.push(p);
     if (S.scalePts.length === 2) {
-      const px = dist(S.scalePts[0], S.scalePts[1]);
-      const m = parseFloat(prompt("Distância real entre os 2 pontos, em metros:", "3"));
-      if (m > 0) { S.pxPerM = px / m; status(`Escala definida: 1 m = ${S.pxPerM.toFixed(1)} px`); }
+      S.scaleLine = S.scalePts.slice();
       S.scalePts = [];
+      if (S.scaleMeters > 0) recomputeScale();
+      else status("Traço marcado. Agora digite quantos METROS ele mede, no campo \"Escala\".");
+    } else {
+      status("Clique o 2º ponto do trecho de medida conhecida.");
     }
   } else if (S.tool === "door" || S.tool === "window") {
     let wi = -1, bd = 18 / S.view.zoom;
@@ -468,12 +516,21 @@ function draw() {
       ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, 7); ctx.fill();
     }
   }
-  // escala
-  if (S.tool === "scale" && S.scalePts.length === 1 && S.hover) {
-    const a = toScreen(S.scalePts[0]), b = toScreen(S.hover);
-    ctx.strokeStyle = "#10b981"; ctx.lineWidth = 2;
+  // escala — traço marcado (persistente) + preview do 2º ponto
+  const drawScaleSeg = (p0, p1, dashed) => {
+    const a = toScreen(p0), b = toScreen(p1);
+    ctx.strokeStyle = "#10b981"; ctx.lineWidth = 2.5;
+    ctx.setLineDash(dashed ? [6, 4] : []);
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-  }
+    ctx.setLineDash([]);
+    for (const q of [a, b]) { ctx.fillStyle = "#10b981"; ctx.beginPath(); ctx.arc(q.x, q.y, 4, 0, 7); ctx.fill(); }
+    if (S.scaleMeters > 0) {
+      ctx.fillStyle = "#10b981"; ctx.font = "12px sans-serif";
+      ctx.fillText(S.scaleMeters + " m", (a.x + b.x) / 2 + 6, (a.y + b.y) / 2 - 6);
+    }
+  };
+  if (S.scaleLine && S.scaleLine.length === 2) drawScaleSeg(S.scaleLine[0], S.scaleLine[1], false);
+  if (S.tool === "scale" && S.scalePts.length === 1 && S.hover) drawScaleSeg(S.scalePts[0], S.hover, true);
 }
 
 // ---------- export -> schema do modelo ----------
@@ -482,7 +539,14 @@ function exportPlan(opts = {}) {
   if (!S.img) return status("Envie uma imagem primeiro.");
   finishWall();
   if (!S.walls.length) return status("Desenhe pelo menos uma parede.");
-  if (!S.pxPerM) return status("Defina a escala (ferramenta Escala) antes de gerar.");
+  if (!S.pxPerM) {
+    // tenta usar o que já foi informado antes de reclamar
+    recomputeScale();
+    if (!S.pxPerM) {
+      return status("Falta a ESCALA: clique \"Escala\", marque 2 pontos e digite os metros — "
+        + "ou preencha \"largura total da planta\" e clique \"aplicar\".");
+    }
+  }
 
   const thpx = (S.wallThickness_cm / 100) * S.pxPerM;
   const half = thpx / 2;
