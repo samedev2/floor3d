@@ -564,6 +564,8 @@ const PLAN_ORDER = ["1191", "4068", "3676"];
       <li>2 dedos: mover</li>
     </ul>
     <button class="vp-toggle" id="toggle-view">Show original</button>
+    <button class="vp-toggle" id="export-svg">Planta SVG (CAD)</button>
+    <button class="vp-toggle" id="export-dxf">Planta DXF (CAD)</button>
   </div>
 </div>
 
@@ -653,6 +655,19 @@ document.getElementById("file-input").addEventListener("change", () => {
 document.getElementById("card-viewer360").addEventListener("click", () => openViewer(currentPlanKey));
 document.getElementById("card-library").addEventListener("click", () => showScreen("screen-library"));
 document.getElementById("card-materials").addEventListener("click", () => showScreen("screen-materials"));
+
+// ---- Export vetorial (SVG / DXF) da planta atual, para CAD ----
+function exportCurrentVector(fmt) {
+  const data = __DEMOS__[currentPlanKey];
+  if (!data) return;
+  if (!window.__QB5D_vector) { showToast("Exportador ainda carregando, tente de novo."); return; }
+  window.__QB5D_vector.exportPlanVector(data, PLAN_META[currentPlanKey]?.name || currentPlanKey, fmt);
+  if (!data.meters_per_pixel) {
+    showToast("Exportado SEM escala real — calibre no editor de traçado para dimensões corretas.", 5000);
+  }
+}
+document.getElementById("export-svg").addEventListener("click", () => exportCurrentVector("svg"));
+document.getElementById("export-dxf").addEventListener("click", () => exportCurrentVector("dxf"));
 
 // ---- Library screen ----
 function renderLibrary() {
@@ -1393,6 +1408,7 @@ toggleViewBtn.addEventListener("click", () => setShowOriginal(!showingOriginal))
 loadDemo(window.__pendingPlanKey || PLAN_ORDER[0]);
 window.__pendingPlanKey = null;
 </script>
+<script type="module" src="./qb5d/vectorexport.js"></script>
 <script type="module" src="./qb5d/store.js"></script>
 <script type="module" src="./qb5d/main.js"></script>
 <script type="module" src="./qb5d/trace.js"></script>

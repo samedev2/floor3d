@@ -203,10 +203,19 @@ export function mountStructureScreen({ planMeta, getCalibrationInfo, onGenerate,
         a.download = name; a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       };
+      const planKey = planSel.value;
+      const vec = (fmt) => () => {
+        const d = window.__QB5D_HOST && window.__QB5D_HOST.demos[planKey];
+        if (d && window.__QB5D_vector) {
+          window.__QB5D_vector.exportPlanVector(d, (planMeta[planKey]?.name || planKey), fmt);
+        }
+      };
       out.append(el("div", { style: "display:flex;gap:8px;margin-top:16px;flex-wrap:wrap" },
         el("button", { class: "qb5d-btn", onclick: () => onOpenViewer() }, "▶ Ver animação da construção"),
-        el("button", { class: "qb5d-btn ghost", onclick: dl(`qb5d-${planSel.value}.json`, quantities.json(), "application/json") }, "Exportar JSON"),
-        el("button", { class: "qb5d-btn ghost", onclick: dl(`qb5d-${planSel.value}.csv`, quantities.csv(), "text/csv") }, "Exportar CSV")));
+        el("button", { class: "qb5d-btn ghost", onclick: dl(`qb5d-${planKey}.json`, quantities.json(), "application/json") }, "Quantitativo JSON"),
+        el("button", { class: "qb5d-btn ghost", onclick: dl(`qb5d-${planKey}.csv`, quantities.csv(), "text/csv") }, "Quantitativo CSV"),
+        el("button", { class: "qb5d-btn ghost", onclick: vec("svg") }, "Planta SVG (CAD)"),
+        el("button", { class: "qb5d-btn ghost", onclick: vec("dxf") }, "Planta DXF (CAD)")));
     },
     readParams() {
       return {
