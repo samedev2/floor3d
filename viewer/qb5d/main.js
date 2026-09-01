@@ -73,7 +73,10 @@ whenHost((host) => {
 
   structUI.onPlanChange(() => structUI.refreshCalibration());
   structUI.onCalibrate((key, val) => {
-    try { setByScale100(key, val); } catch (e) { /* valor inválido */ }
+    try {
+      const cal = setByScale100(key, val);
+      window.__PLAN_STORE?.isEnabled() && window.__PLAN_STORE.updateCal(key, cal.metersPerPixel).catch(() => {});
+    } catch (e) { /* valor inválido */ }
     structUI.refreshCalibration();
   });
 

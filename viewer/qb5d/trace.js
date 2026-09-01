@@ -9,6 +9,7 @@
 // =====================================================================
 
 import { setByScale100 } from "./calibration.js";
+import { detectFromImage } from "./detect.js";
 
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
@@ -107,6 +108,8 @@ function ensureScreen() {
     onchange: (e) => { S.openingWidth_cm = +e.target.value || 90; } });
 
   const tools = el("div", { id: "trace-tools" },
+    el("button", { class: "prim", style: "background:linear-gradient(135deg,#8b5cf6,#6d28d9)", onclick: runDetect },
+      "🪄 Detectar paredes"),
     el("div", { class: "trow" },
       mkToolBtn("wall", "Parede"), mkToolBtn("door", "Porta"),
       mkToolBtn("window", "Janela")),
@@ -116,8 +119,9 @@ function ensureScreen() {
     el("label", {}, "Espessura parede (cm)", thickIn),
     el("label", {}, "Largura do vão (cm)", widthIn),
     el("div", { class: "hint" },
-      "Parede: clique os cantos, Enter/duplo-clique fecha. Vão: clique sobre a parede. " +
-      "Escala: clique 2 pontos de medida conhecida. Arrastar c/ botão do meio = mover; roda = zoom."),
+      "🪄 detecta as paredes sozinho (planta de traço sólido funciona melhor). " +
+      "Parede: clique os cantos, Enter fecha. Vão: clique sobre a parede. " +
+      "Escala: 2 pontos de medida conhecida. Botão do meio = mover; roda = zoom."),
     el("button", { class: "prim", onclick: exportPlan }, "Gerar 3D →"));
 
   const screen = el("div", { class: "screen", id: "screen-trace" },
@@ -166,7 +170,7 @@ function pickFile() {
   document.body.append(inp); inp.click(); setTimeout(() => inp.remove(), 1000);
 }
 
-function loadImage(file) {
+function loadImage(file, cb) {
   const rd = new FileReader();
   rd.onload = () => {
     const url = rd.result;
@@ -176,12 +180,62 @@ function loadImage(file) {
       S.img = im; S.imgW = im.naturalWidth; S.imgH = im.naturalHeight;
       S.planName = (file.name || "Planta traçada").replace(/\.[^.]+$/, "").slice(0, 40) || "Planta traçada";
       S.walls = []; S.openings = []; S.pxPerM = null; S.draft = []; S.scalePts = [];
-      resize(); fitView(); status();
+      if (canvas) { resize(); fitView(); status(); }
+      if (cb) cb(im);
     };
     im.src = url;
   };
   rd.readAsDataURL(file);
 }
+
+// Roda a detecção automática sobre a imagem atual e carrega as paredes
+// encontradas como segmentos editáveis. `scaleImg` = imagem original (usada
+// para detectar em resolução maior que a exibida).
+function runDetect(imgOverride) {
+  const im = imgOverride || S.img;
+  if (!im) { status("Envie uma imagem antes de detectar."); return null; }
+  status("Detectando paredes…");
+  let res;
+  try { res = detectFromImage(im); }
+  catch (e) { status("Falha na detecção: " + e.message); return null; }
+
+  // segmentos vêm em px da imagem processada (com downscale) — reescala p/ px da imagem
+  const sx = S.imgW / res.canvas_size[0], sy = S.imgH / res.canvas_size[1];
+  S.walls = (res.segments || []).map((s) => ({
+    a: { x: s.a.x * sx, y: s.a.y * sy },
+    b: { x: s.b.x * sx, y: s.b.y * sy },
+  }));
+  S.openings = [];
+  status(`${S.walls.length} paredes detectadas. Confira, marque portas/janelas e defina a escala.`);
+  return res;
+}
+
+// Fluxo "automático": carrega imagem -> detecta -> se achou parede suficiente,
+// já gera o 3D (escala PROVISÓRIA); senão abre o editor pré-preenchido.
+export function autoImportImage(file) {
+  ensureScreen();
+  loadImage(file, (im) => {
+    const res = runDetect(im);
+    const n = res ? (res.polygons.wall || []).length : 0;
+    if (n >= 4) {
+      // escala provisória: assume ~10 m na maior dimensão do traçado
+      let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+      for (const w of S.walls) for (const p of [w.a, w.b]) {
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      }
+      const spanPx = Math.max(maxX - minX, maxY - minY) || S.imgW;
+      S.pxPerM = spanPx / 10;
+      exportPlan({ provisional: true });
+    } else {
+      go("screen-trace");
+      if (window.showToast) window.showToast(
+        n ? `Detectei ${n} parede(s) — ajuste no editor e defina a escala.`
+          : "Não consegui detectar paredes nesta imagem. Desenhe manualmente.", 5500);
+    }
+  });
+}
+window.autoImportImage = autoImportImage;
 
 function resize() {
   if (!canvas) return;
@@ -368,7 +422,8 @@ function draw() {
 }
 
 // ---------- export -> schema do modelo ----------
-function exportPlan() {
+function exportPlan(opts = {}) {
+  const provisional = opts && opts.provisional === true;
   if (!S.img) return status("Envie uma imagem primeiro.");
   finishWall();
   if (!S.walls.length) return status("Desenhe pelo menos uma parede.");
@@ -406,25 +461,35 @@ function exportPlan() {
   };
 
   const host = window.__QB5D_HOST;
-  const key = "tr-" + Date.now().toString(36);
+  const key = (provisional ? "det-" : "tr-") + Date.now().toString(36);
   const name = S.planName || "Planta traçada";
   (host?.demos || {})[key] = data;
-  (host?.planMeta || {})[key] = { name, tag: "Traçada" };
+  (host?.planMeta || {})[key] = { name, tag: provisional ? "Auto" : "Traçada" };
   (host?.planOrder || []).push(key);
 
-  // calibração métrica já sai pronta: metros por 100 unidades de desenho
+  // calibração métrica: real (traçado) ou provisória (auto-detecção)
   try { setByScale100(key, 100 / S.pxPerM); } catch { /* storage indisponível */ }
 
   try { window.updateHomeBanner && window.updateHomeBanner(); } catch {}
   try { window.renderLibrary && window.renderLibrary(); } catch {}
   try { window.__QB5D_selectPlan && window.__QB5D_selectPlan(key); } catch {}
 
+  // salva no Supabase (best effort — não bloqueia o fluxo se falhar)
+  if (window.__PLAN_STORE && window.__PLAN_STORE.isEnabled()) {
+    window.__PLAN_STORE.savePlan({
+      id: key, name, source: provisional ? "detect" : "trace",
+      meters_per_pixel: 1 / S.pxPerM, data,
+    }).catch((e) => window.showToast && window.showToast("Não salvei no Supabase: " + e.message, 5000));
+  }
+
   status(`"${name}" gerada: ${wall.length} paredes, ${door.length} portas, ${windowP.length} janelas.`);
   if (window.openViewer) window.openViewer(key);
   else go("screen-viewer");
   setTimeout(() => {
-    window.showToast && window.showToast(
-      `"${name}" pronta no 3D. Abra "Estruturação QB5D" para materiais e obra 4D (a escala já foi salva).`, 6000);
+    const msg = provisional
+      ? `"${name}": paredes detectadas automaticamente. ESCALA PROVISÓRIA (~10 m) — abra "Traçar Planta" e use a ferramenta Escala para acertar as medidas.`
+      : `"${name}" pronta no 3D. Abra "Estruturação QB5D" para materiais e obra 4D (a escala já foi salva).`;
+    window.showToast && window.showToast(msg, 7000);
   }, 400);
 }
 

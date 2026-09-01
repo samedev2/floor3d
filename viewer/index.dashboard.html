@@ -708,15 +708,21 @@ let LIVE = false;
 let importBusy = false;
 async function importPlanFile(file) {
   if (!file) return;
-  if (!LIVE) {
-    showToast("Sem servidor conectado. Rode o servidor local (dev.ps1 / uvicorn server.main:app na porta 8000) para analisar plantas novas. Sem ele, so as 3 plantas de exemplo.", 7000);
+  // Imagem (foto/print/PDF exportado): deteccao automatica de paredes + editor
+  // de tracado. Nao depende do servidor.
+  if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || "") || (file.type || "").startsWith("image/")) {
+    if (window.autoImportImage) { window.autoImportImage(file); return; }
+    if (window.openTraceEditor) { window.openTraceEditor(file); return; }
+    showToast("Editor de tracado ainda carregando, tente de novo em 1s.");
     return;
   }
-  if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || "") || (file.type || "").startsWith("image/")) {
-    if (window.openTraceEditor) { window.openTraceEditor(file); return; }
+  // SVG -> modelo (precisa do servidor)
+  if (!LIVE) {
+    showToast("Sem servidor conectado. Rode o servidor local (dev.ps1 / uvicorn server.main:app na porta 8000) para analisar SVG. Para foto/imagem, use o editor de tracado.", 7000);
+    return;
   }
   if (!/\.svg$/i.test(file.name || "")) {
-    showToast("O modelo so analisa SVG no formato de anotacao CubiCasa5K. Foto, PDF ou DWG ainda nao sao suportados.", 6000);
+    showToast("Formato nao reconhecido. Envie SVG (CubiCasa5K) ou uma imagem (foto/PNG/JPG).", 6000);
     return;
   }
   if (importBusy) return;
@@ -750,6 +756,10 @@ async function importPlanFile(file) {
     const nd = ((data.polygons || {}).door || []).length;
     const nw = ((data.polygons || {}).window || []).length;
     showToast('"' + name + '" analisada: ' + nWall + " paredes, " + nd + " portas, " + nw + " janelas. Abrindo…", 4000);
+    if (window.__PLAN_STORE && window.__PLAN_STORE.isEnabled()) {
+      window.__PLAN_STORE.savePlan({ id: key, name, source: "svg", meters_per_pixel: null, data })
+        .catch((e) => showToast("Nao salvei no Supabase: " + e.message, 5000));
+    }
     openViewer(key);
   } catch (e) {
     showToast("Falha no envio: " + (e && e.message || e), 6000);
@@ -1381,6 +1391,7 @@ toggleViewBtn.addEventListener("click", () => setShowOriginal(!showingOriginal))
 loadDemo(window.__pendingPlanKey || PLAN_ORDER[0]);
 window.__pendingPlanKey = null;
 </script>
+<script type="module" src="./qb5d/store.js"></script>
 <script type="module" src="./qb5d/main.js"></script>
 <script type="module" src="./qb5d/trace.js"></script>
 </body>
