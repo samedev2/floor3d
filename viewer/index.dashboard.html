@@ -378,7 +378,7 @@ const PLAN_ORDER = ["1191", "4068", "3676"];
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Escolher arquivo
         </button>
-        <input type="file" id="file-input" accept=".svg,.png,.jpg,.jpeg" hidden>
+        <input type="file" id="file-input" accept=".svg,.png,.jpg,.jpeg,.webp" hidden>
       </div>
     </div>
 
@@ -402,10 +402,10 @@ const PLAN_ORDER = ["1191", "4068", "3676"];
         <div><div class="mc-title">Materiais de Obra</div><div class="mc-sub">Conta tijolos, cimento, areia e mais</div></div>
       </button>
 
-      <button class="mode-card mc-blockout locked" disabled>
+      <button class="mode-card mc-blockout" id="card-structure">
         <svg class="mc-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        <svg class="mc-corner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <div><div class="mc-title">Blockout Preciso</div><div class="mc-sub">Em breve</div></div>
+        <svg class="mc-corner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <div><div class="mc-title">Estruturação QB5D</div><div class="mc-sub">Estrutura + obra 4D + quantitativo NBR</div></div>
       </button>
 
       <button class="mode-card mc-library" id="card-library">
@@ -632,7 +632,8 @@ document.getElementById("btn-import").addEventListener("click", () => {
 });
 document.getElementById("file-input").addEventListener("change", () => {
   const f = document.getElementById("file-input");
-  if (f.files.length) {
+  if (f.files.length) { importPlanFile(f.files[0]); f.value = ""; return; }
+  if (false) {
     showToast("Esta build é 100% offline (sem backend/rede) — a importação real de novas plantas exige rodar \u201c./dev.sh\u201d localmente. Veja as 3 plantas de exemplo na Biblioteca.");
     f.value = "";
   }
@@ -669,10 +670,89 @@ function renderLibrary() {
 }
 renderLibrary();
 
+// ---------------------------------------------------------------------
+// Importacao real: se o servidor FastAPI responde ao /healthz, o upload
+// de planta passa pelo modelo (POST /extract) de verdade e vira um item
+// novo na Biblioteca. Sem servidor, so os 3 exemplos.
+// ---------------------------------------------------------------------
+let LIVE = false;
+(async () => {
+  try {
+    const res = await fetch("/healthz", { cache: "no-store" });
+    if (!res.ok) return;
+    if (!(res.headers.get("content-type") || "").includes("application/json")) return;
+    const body = await res.json();
+    LIVE = !!(body && body.ok === true);
+  } catch { /* sem servidor local */ }
+  if (LIVE) {
+    const fi = document.getElementById("file-input");
+    if (fi) fi.setAttribute("accept", ".svg");
+    const badge = document.querySelector("#screen-home .demo-badge");
+    if (badge) badge.textContent = "LIVE";
+    const p = document.querySelector(".import-card p");
+    if (p) p.textContent = "Servidor conectado — envie um SVG (formato CubiCasa5K) e o modelo analisa a planta.";
+  }
+})();
+
+let importBusy = false;
+async function importPlanFile(file) {
+  if (!file) return;
+  if (!LIVE) {
+    showToast("Sem servidor conectado. Rode o servidor local (dev.ps1 / uvicorn server.main:app na porta 8000) para analisar plantas novas. Sem ele, so as 3 plantas de exemplo.", 7000);
+    return;
+  }
+  if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || "") || (file.type || "").startsWith("image/")) {
+    if (window.openTraceEditor) { window.openTraceEditor(file); return; }
+  }
+  if (!/\.svg$/i.test(file.name || "")) {
+    showToast("O modelo so analisa SVG no formato de anotacao CubiCasa5K. Foto, PDF ou DWG ainda nao sao suportados.", 6000);
+    return;
+  }
+  if (importBusy) return;
+  importBusy = true;
+  showToast("Analisando a planta no modelo…", 60000);
+  try {
+    const fd = new FormData();
+    fd.append("svg", file);
+    const res = await fetch("/extract", { method: "POST", body: fd });
+    if (!res.ok) {
+      let detail = "HTTP " + res.status;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      showToast("Nao deu para analisar: " + detail, 7000);
+      return;
+    }
+    const data = await res.json();
+    const nWall = ((data.polygons || {}).wall || []).length;
+    if (!nWall) { showToast("O modelo nao encontrou paredes nessa planta.", 6000); return; }
+    const key = "up-" + Date.now().toString(36);
+    const name = (file.name.replace(/\.svg$/i, "") || "Planta enviada").slice(0, 40);
+    __DEMOS__[key] = data;
+    PLAN_META[key] = { name, tag: "Enviada" };
+    PLAN_ORDER.push(key);
+    currentPlanKey = key;
+    try {
+      const o = document.createElement("option");
+      o.value = key; o.textContent = name; matPlanSelect.appendChild(o);
+    } catch {}
+    updateHomeBanner();
+    renderLibrary();
+    const nd = ((data.polygons || {}).door || []).length;
+    const nw = ((data.polygons || {}).window || []).length;
+    showToast('"' + name + '" analisada: ' + nWall + " paredes, " + nd + " portas, " + nw + " janelas. Abrindo…", 4000);
+    openViewer(key);
+  } catch (e) {
+    showToast("Falha no envio: " + (e && e.message || e), 6000);
+  } finally {
+    importBusy = false;
+  }
+}
+
 document.getElementById("btn-lib-upload").addEventListener("click", () => {
+  document.getElementById("file-input").click(); return; // eslint-disable-line
   showToast("Esta build é 100% offline — envio/detecção automática exige o servidor local (./dev.sh) com o modelo treinado.");
 });
 document.getElementById("btn-lib-manual").addEventListener("click", () => {
+  if (window.openTraceEditor) { window.openTraceEditor(); return; }
   showToast("Reconhecimento de plantas desenhadas à mão não faz parte deste projeto (o modelo foi treinado só em plantas CAD do CubiCasa5K).");
 });
 
@@ -787,6 +867,7 @@ window.addEventListener("dragleave", e => { e.preventDefault(); dragDepth--; if 
 window.addEventListener("dragover", e => { e.preventDefault(); });
 window.addEventListener("drop", e => {
   e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) { importPlanFile(e.dataTransfer.files[0]); return; }
   showToast("Esta build é 100% offline — importação de novas plantas exige o servidor local (./dev.sh).");
 });
 </script>
@@ -1097,6 +1178,7 @@ function tick(now) {
     controls.target.lerpVectors(cameraTween.fromTarget, cameraTween.toTarget, eased);
     if (t >= 1) cameraTween.active = false;
   }
+  if (window.__QB5D_HOST && window.__QB5D_HOST.onFrame) window.__QB5D_HOST.onFrame(now);
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
@@ -1204,6 +1286,12 @@ async function loadPlan(data) {
       duration: RISE_DURATION_MS,
     });
   });
+
+  // QB5D hook — deixa o motor de estruturação assumir a renderização se o
+  // usuário gerou uma estrutura para esta planta (senão, não faz nada).
+  if (window.__QB5D_HOST && window.__QB5D_HOST.onPlanLoaded) {
+    window.__QB5D_HOST.onPlanLoaded(data, { cx, cy, scale });
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -1212,6 +1300,19 @@ async function loadPlan(data) {
 // window.__threeReady can safely become true.
 // -----------------------------------------------------------------------------
 window.__threeReady = true;
+
+// QB5D bridge — expõe o mínimo para o motor de estruturação (viewer/qb5d/)
+// operar na mesma cena/câmera sem duplicar o bootstrap do Three.js.
+window.__QB5D_HOST = {
+  THREE, scene, camera, controls, planGroup, floor, renderer,
+  frameModel, tweenCamera, overheadPosition, polygonsBBox,
+  TARGET_PLAN_SIZE,
+  demos: __DEMOS__, planMeta: PLAN_META, planOrder: PLAN_ORDER,
+  loadDemo,
+  get currentPlanKey() { return currentPlanKey; },
+  onFrame: null,
+  onPlanLoaded: null,
+};
 
 const status = document.getElementById("status");
 function summarize(data) {
@@ -1269,5 +1370,7 @@ toggleViewBtn.addEventListener("click", () => setShowOriginal(!showingOriginal))
 loadDemo(window.__pendingPlanKey || PLAN_ORDER[0]);
 window.__pendingPlanKey = null;
 </script>
+<script type="module" src="./qb5d/main.js"></script>
+<script type="module" src="./qb5d/trace.js"></script>
 </body>
 </html>

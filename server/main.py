@@ -103,6 +103,12 @@ DEMOS_DIR = REPO_ROOT / "viewer" / "demos"
 if DEMOS_DIR.is_dir():
     app.mount("/demos", StaticFiles(directory=DEMOS_DIR), name="demos")
 
+# QB5D structural-modeling engine — vanilla ES modules loaded by the dashboard
+# (`<script type="module" src="./qb5d/main.js">`). Served static; no build step.
+QB5D_DIR = REPO_ROOT / "viewer" / "qb5d"
+if QB5D_DIR.is_dir():
+    app.mount("/qb5d", StaticFiles(directory=QB5D_DIR), name="qb5d")
+
 
 def _attach_input_image(svg_path: Path, result: dict) -> dict:
     """Render a transparent-background PNG of the structural SVG at content
