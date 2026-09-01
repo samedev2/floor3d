@@ -191,6 +191,9 @@ async def extract(svg: UploadFile = File(...)) -> dict:
 # ---------------------------------------------------------------------------
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 
+_XY = {"type": "number"}
+_POINT_LIST = {"type": "array", "items": {"type": "array", "items": _XY}}
+
 _GEMINI_SCHEMA = {
     "type": "object",
     "properties": {
@@ -202,8 +205,8 @@ _GEMINI_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "x1": {"type": "number"}, "y1": {"type": "number"},
-                    "x2": {"type": "number"}, "y2": {"type": "number"},
+                    "x1": _XY, "y1": _XY, "x2": _XY, "y2": _XY,
+                    "thickness_px": {"type": "number"},
                 },
                 "required": ["x1", "y1", "x2", "y2"],
             },
@@ -212,10 +215,7 @@ _GEMINI_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {
-                    "x": {"type": "number"}, "y": {"type": "number"},
-                    "width_px": {"type": "number"},
-                },
+                "properties": {"x": _XY, "y": _XY, "width_px": {"type": "number"}},
                 "required": ["x", "y"],
             },
         },
@@ -223,17 +223,48 @@ _GEMINI_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {
-                    "x": {"type": "number"}, "y": {"type": "number"},
-                    "width_px": {"type": "number"},
-                },
+                "properties": {"x": _XY, "y": _XY, "width_px": {"type": "number"}},
                 "required": ["x", "y"],
+            },
+        },
+        "rooms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "polygon": _POINT_LIST,
+                },
+                "required": ["polygon"],
+            },
+        },
+        "fixtures": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "toilet", "sink", "kitchen_sink", "shower", "bathtub",
+                            "stove", "fridge", "bed", "wardrobe", "table", "sofa",
+                            "stairs", "water_tank", "column", "other",
+                        ],
+                    },
+                    "x": _XY, "y": _XY,
+                    "width_px": {"type": "number"},
+                    "depth_px": {"type": "number"},
+                    "rotation_deg": {"type": "number"},
+                },
+                "required": ["type", "x", "y"],
             },
         },
         "scale": {
             "type": "object",
             "properties": {
                 "px_per_meter": {"type": "number"},
+                "building_width_m": {"type": "number"},
+                "building_depth_m": {"type": "number"},
                 "note": {"type": "string"},
             },
         },
@@ -243,19 +274,35 @@ _GEMINI_SCHEMA = {
 
 _GEMINI_PROMPT = (
     "You are analysing an architectural floor plan image. Return ONLY JSON "
-    "matching the schema.\n"
+    "matching the schema. Be thorough — this drives a 3D model.\n"
     "- walls: the CENTRELINE of every wall as a straight segment "
-    "(x1,y1)-(x2,y2) in image pixel coordinates, origin at the top-left. "
-    "Split walls at junctions. Include interior partitions and exterior "
-    "walls. Ignore furniture, text, dimension lines/arrows, hatching and "
-    "plumbing fixtures.\n"
-    "- wall_thickness_px: typical wall thickness in pixels.\n"
-    "- doors / windows: the centre point (x,y) of the opening on its wall "
-    "and the opening width in pixels.\n"
-    "- scale.px_per_meter: if the drawing shows dimension labels (e.g. "
-    "'3.00', '2,55 m', '6x8'), use them to compute how many pixels equal "
-    "one metre. Omit scale entirely if no reliable dimension is visible.\n"
-    "All coordinates must lie inside the image bounds."
+    "(x1,y1)-(x2,y2) in image pixel coordinates, origin top-left. Split "
+    "walls at junctions. Include exterior walls AND every interior "
+    "partition. Give per-wall thickness_px when it varies.\n"
+    "- wall_thickness_px: the typical wall thickness in pixels.\n"
+    "- doors / windows: centre point (x,y) on the wall and opening width in "
+    "pixels. Distinguish doors (with a swing arc) from windows.\n"
+    "- rooms: one polygon (ordered pixel points) per enclosed space, with "
+    "its label if written on the plan (Quarto, Sala, Cozinha, WC, "
+    "Banheiro, Suíte, Área, Garagem, Varanda...). Polygons should follow "
+    "the inner face of the walls.\n"
+    "- fixtures: every fixed item drawn as a symbol — toilet, sink, "
+    "kitchen_sink, shower, bathtub, stove, fridge, bed, wardrobe, table, "
+    "sofa, stairs, water_tank, column. Give centre (x,y), footprint "
+    "width_px/depth_px and rotation_deg (0 = width runs left-right).\n"
+    "- scale: if the drawing has dimension labels (e.g. '3.00', '2,55 m', "
+    "'6x8', a title like 'Casa 6x8'), set scale.px_per_meter, and also "
+    "scale.building_width_m / building_depth_m for the overall envelope. "
+    "Omit scale only if truly nothing is legible.\n"
+    "All coordinates must lie inside the image bounds. Ignore furniture "
+    "hatching, text blocks and dimension arrows themselves.\n\n"
+    "Return ONLY a JSON object with exactly this shape:\n"
+    '{"walls":[{"x1":0,"y1":0,"x2":0,"y2":0,"thickness_px":0}],'
+    '"doors":[{"x":0,"y":0,"width_px":0}],'
+    '"windows":[{"x":0,"y":0,"width_px":0}],'
+    '"rooms":[{"name":"","polygon":[[0,0],[0,0]]}],'
+    '"fixtures":[{"type":"toilet","x":0,"y":0,"width_px":0,"depth_px":0,"rotation_deg":0}],'
+    '"scale":{"px_per_meter":0,"building_width_m":0,"building_depth_m":0,"note":""}}'
 )
 
 
@@ -281,6 +328,12 @@ def _wall_rect(x1: float, y1: float, x2: float, y2: float, ht: float) -> list[li
 
 
 def _ai_to_result(parsed: dict, w: int, h: int, raw: bytes, mime: str) -> dict:
+    def cx(v: float) -> float:
+        return max(0.0, min(float(w), float(v)))
+
+    def cy(v: float) -> float:
+        return max(0.0, min(float(h), float(v)))
+
     thk = parsed.get("wall_thickness_px")
     try:
         thk = float(thk)
@@ -293,18 +346,62 @@ def _ai_to_result(parsed: dict, w: int, h: int, raw: bytes, mime: str) -> dict:
     walls: list[dict] = []
     for wl in parsed.get("walls") or []:
         try:
-            x1, y1, x2, y2 = float(wl["x1"]), float(wl["y1"]), float(wl["x2"]), float(wl["y2"])
+            x1, y1 = cx(wl["x1"]), cy(wl["y1"])
+            x2, y2 = cx(wl["x2"]), cy(wl["y2"])
         except (KeyError, TypeError, ValueError):
             continue
         if math.hypot(x2 - x1, y2 - y1) < 3:
             continue
-        walls.append({"outer": _wall_rect(x1, y1, x2, y2, half), "holes": []})
+        try:
+            wht = float(wl.get("thickness_px"))
+        except (TypeError, ValueError):
+            wht = 0.0
+        wh = max(2.0, wht / 2.0) if wht > 0 else half
+        walls.append({"outer": _wall_rect(x1, y1, x2, y2, wh), "holes": []})
+
+    def _clean_poly(pts) -> list[list[float]]:
+        out: list[list[float]] = []
+        for p in pts or []:
+            try:
+                out.append([cx(p[0]), cy(p[1])])
+            except (TypeError, ValueError, IndexError):
+                continue
+        return out
+
+    rooms: list[dict] = []
+    for rm in parsed.get("rooms") or []:
+        poly = _clean_poly(rm.get("polygon"))
+        if len(poly) >= 3:
+            rooms.append({"name": str(rm.get("name") or ""), "outer": poly})
+
+    fixtures: list[dict] = []
+    for fx in parsed.get("fixtures") or []:
+        try:
+            x, y = cx(fx["x"]), cy(fx["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        try:
+            fw = float(fx.get("width_px")) or thk * 4
+        except (TypeError, ValueError):
+            fw = thk * 4
+        try:
+            fd = float(fx.get("depth_px")) or fw
+        except (TypeError, ValueError):
+            fd = fw
+        try:
+            rot = float(fx.get("rotation_deg")) or 0.0
+        except (TypeError, ValueError):
+            rot = 0.0
+        fixtures.append({
+            "type": str(fx.get("type") or "other"),
+            "x": x, "y": y, "w_px": abs(fw), "d_px": abs(fd), "angle_deg": rot,
+        })
 
     def _openings(items) -> list[dict]:
         out: list[dict] = []
         for o in items or []:
             try:
-                x, y = float(o["x"]), float(o["y"])
+                x, y = cx(o["x"]), cy(o["y"])
             except (KeyError, TypeError, ValueError):
                 continue
             try:
@@ -324,13 +421,30 @@ def _ai_to_result(parsed: dict, w: int, h: int, raw: bytes, mime: str) -> dict:
             "door": _openings(parsed.get("doors")),
             "window": _openings(parsed.get("windows")),
         },
+        "rooms": rooms,
+        "fixtures": fixtures,
         "input_image_b64": base64.b64encode(raw).decode("ascii"),
+        "source": "gemini",
     }
+
     scale = parsed.get("scale") or {}
+    ppm = 0.0
     try:
         ppm = float(scale.get("px_per_meter"))
     except (TypeError, ValueError):
         ppm = 0.0
+    # fallback: derive scale from the overall building dimension in metres
+    if ppm <= 0:
+        try:
+            bwm = float(scale.get("building_width_m"))
+        except (TypeError, ValueError):
+            bwm = 0.0
+        if bwm > 0 and walls:
+            xs = [p[0] for wl in walls for p in wl["outer"]]
+            span = (max(xs) - min(xs)) if xs else 0.0
+            if span > 0:
+                ppm = span / bwm
+                scale = {**scale, "note": (scale.get("note") or "") + " (via building_width_m)"}
     if ppm > 0:
         result["meters_per_pixel"] = 1.0 / ppm
         result["scale_note"] = str(scale.get("note") or "")
@@ -367,8 +481,10 @@ async def detect_ai(image: UploadFile = File(...)) -> dict:
             {"text": _GEMINI_PROMPT + f"\nThe image is {w}x{h} pixels."},
         ]}],
         "generationConfig": {
+            # Note: no responseSchema — the strict OpenAPI subset made Gemini
+            # drop the optional rooms/fixtures/scale fields. A plain JSON mime
+            # type + an explicit shape in the prompt returns everything.
             "responseMimeType": "application/json",
-            "responseSchema": _GEMINI_SCHEMA,
             "temperature": 0.1,
         },
     }

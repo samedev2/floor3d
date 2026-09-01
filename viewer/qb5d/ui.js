@@ -249,7 +249,7 @@ const STAGE_LAYER = {
   locacao: "lastro", fundacao: "fundacao", pilar: "pilar", viga: "viga",
   laje_cob: "laje_cob", alvenaria: "alvenaria", verga: "verga",
   contrapiso: "laje_piso", reboco: "alvenaria", esquadria: "esquadria",
-  instalacoes: "instalacoes",
+  mobilia: "mobilia", instalacoes: "instalacoes",
 };
 
 export function mountTimeline({ renderer, sequence, structure }) {

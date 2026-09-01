@@ -144,6 +144,7 @@ export const LAYERS = [
   { id: "alvenaria",   label: "Alvenaria de vedação",  color: 0xb0512c },
   { id: "verga",       label: "Vergas / contravergas", color: 0xd8dade },
   { id: "esquadria",   label: "Portas e janelas",      color: 0x9a8158 },
+  { id: "mobilia",     label: "Louças e mobília",      color: 0x5f9ea0 },
   { id: "viga",        label: "Vigas",                 color: 0xdfe1e3 },
   { id: "laje_cob",    label: "Laje de cobertura",     color: 0xe4e2dc },
   { id: "instalacoes", label: "Instalações (Fase 2)",  color: 0x3b82f6 },

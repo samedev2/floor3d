@@ -32,6 +32,8 @@ const STAGE_DEFS = [
     match: (e) => e.layer === "laje_piso", always: true },
   { id: "reboco",     label: "Chapisco e reboco",      color: 0xe5e7eb, entrance: "finish",
     match: () => false, always: true },
+  { id: "mobilia",    label: "Louças e mobília",       color: 0x14b8a6, entrance: "fade",
+    match: (e) => e.layer === "mobilia" },
   // ganchos Fase 2
   { id: "instalacoes", label: "Instalações (Fase 2)",  color: 0x60a5fa, entrance: "fade",
     match: (e) => e.layer === "instalacoes" },
@@ -99,7 +101,7 @@ export function buildSequence(structure, opts = {}) {
   const rebocoStage = stages.find((s) => s.id === "reboco");
   // instante em que TODA a estrutura + materiais estruturais (concreto,
   // alvenaria, vãos, contrapiso) já estão colocados — antes do acabamento.
-  const FINISH_IDS = new Set(["reboco", "instalacoes", "acabamento"]);
+  const FINISH_IDS = new Set(["reboco", "mobilia", "instalacoes", "acabamento"]);
   const preFinish = stages.filter((s) => !FINISH_IDS.has(s.id));
   const structuralCompleteMs = preFinish.length
     ? Math.max(...preFinish.map((s) => s.startMs + s.durationMs))

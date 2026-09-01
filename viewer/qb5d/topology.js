@@ -335,7 +335,30 @@ export function buildTopology(data, opts = {}) {
   }));
   const solid = rasterMask([...wallPolys, ...doorPolys, ...windowPolys], strokeSegs, w, h);
   const cell = floodExterior(solid, w, h);
-  const rooms = connectedRooms(cell, w, h, Math.max(120, w * h * 0.0008));
+  let rooms = connectedRooms(cell, w, h, Math.max(120, w * h * 0.0008));
+  // se a IA (Gemini) devolveu cômodos, usa esses (têm nome e são mais fiéis)
+  if (Array.isArray(data.rooms) && data.rooms.length) {
+    rooms = data.rooms
+      .filter((r) => Array.isArray(r.outer) && r.outer.length >= 3)
+      .map((r, i) => {
+        let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9, ax = 0, ay = 0;
+        for (const [x, y] of r.outer) {
+          minX = Math.min(minX, x); minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+          ax += x; ay += y;
+        }
+        const n = r.outer.length;
+        return {
+          id: `R${i + 1}`, name: r.name || "",
+          area_px: shoelacePts(r.outer),
+          centroid: { x: ax / n, y: ay / n },
+          bbox: { minX, minY, maxX, maxY },
+          span_min_px: Math.min(maxX - minX, maxY - minY),
+          span_max_px: Math.max(maxX - minX, maxY - minY),
+          outer: r.outer,
+        };
+      });
+  }
   const footprint = traceFootprint(cell, w, h);
   let footprintArea_px = 0;
   for (let i = 0; i < cell.length; i++) if (cell[i] !== 3) footprintArea_px++;
@@ -411,6 +434,7 @@ export function buildTopology(data, opts = {}) {
     footprintHull,      // envoltória convexa expandida
     footprintPoly,      // o melhor dos dois — use este para lajes/radier
     footprintArea_px,
+    fixtures: Array.isArray(data.fixtures) ? data.fixtures : [],
   };
 }
 

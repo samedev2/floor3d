@@ -410,6 +410,26 @@ export function generateStructure(topo, params, metersPerPixel) {
     })(),
   });
 
+  // ---- 9. Louças e mobília (da IA — só volume visual, sem quantitativo) ----
+  const FIXTURE_H = {
+    toilet: 0.42, sink: 0.85, kitchen_sink: 0.90, shower: 2.00, bathtub: 0.55,
+    stove: 0.90, fridge: 1.70, bed: 0.50, wardrobe: 2.20, table: 0.75,
+    sofa: 0.80, stairs: 1.20, water_tank: 1.10, column: pd, other: 0.80,
+  };
+  (topo.fixtures || []).forEach((f, i) => {
+    const wPx = (f.w_px || f.width_px || 30);
+    const dPx = (f.d_px || f.depth_px || wPx);
+    if (!Number.isFinite(f.x) || !Number.isFinite(f.y) || wPx <= 0) return;
+    add({
+      id: `FX${i + 1}`, type: "mobilia", layer: "mobilia", shape: "box",
+      center: { x: f.x, y: f.y }, w_px: wPx, d_px: dPx,
+      angleRad: ((f.angle_deg || f.rotation_deg || 0) * Math.PI) / 180,
+      base_m: 0, height_m: FIXTURE_H[f.type] || 0.8, material: "mobilia",
+      dims_cm: { tipo: f.type || "other" },
+      quantities: ZERO_Q(),
+    });
+  });
+
   // ---- totais ----
   const totals = ZERO_Q();
   for (const e of els) addQ(totals, e.quantities || {});

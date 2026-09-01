@@ -48,6 +48,7 @@ export function createQB5DRenderer({ THREE }) {
     alvenaria: new THREE.MeshStandardMaterial({ color: 0xb0512c, roughness: 0.95, metalness: 0 }),
     magro: new THREE.MeshStandardMaterial({ color: 0xc4c4c0, roughness: 0.98, metalness: 0 }),
     esquadria: new THREE.MeshStandardMaterial({ color: 0x9a8158, roughness: 0.6, metalness: 0.1 }),
+    mobilia: new THREE.MeshStandardMaterial({ color: 0x5f9ea0, roughness: 0.7, metalness: 0.05 }),
     vidro: new THREE.MeshPhysicalMaterial({
       color: 0xbcd3dd, roughness: 0.05, metalness: 0,
       transparent: true, opacity: 0.34, transmission: 0.4, ior: 1.45,
