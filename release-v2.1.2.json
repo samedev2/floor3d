@@ -1,0 +1,7 @@
+{
+  "version": "2.1.2",
+  "date": "2026-09-01",
+  "changes": [
+    "UI/UX overhaul in MaterialEstimate: accordion categories, executive summary, cost estimate, improved card design, icon per category, expand/collapse all"
+  ]
+}
