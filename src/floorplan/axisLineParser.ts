@@ -144,6 +144,19 @@ export class AxisLineParser {
         filteredWalls.push(...fallback);
       }
 
+      // 6.5. Detecta CURVAS (arcos) no bitmap - paredes curvas
+      onProgress?.('Detectando paredes curvas...');
+      const curves = this.detectCurves(mask, W, H, xStart, xEnd, yStart, yEnd, Math.max(W, H) * 0.04);
+      if (curves.length > 0) {
+        warnings.push(`Detectadas ${curves.length} paredes curvas`);
+        // Adiciona curvas como paredes (aproximadas por segmentos retos)
+        for (const c of curves) {
+          // Adiciona 2-3 segmentos retos que aproximam o arco
+          const segs = this.curveToSegments(c);
+          filteredWalls.push(...segs);
+        }
+      }
+
       // 7. Vértices
       const { vertices, vertexByPixel } = this.buildVertices(hWalls, vWalls);
 
@@ -182,8 +195,16 @@ export class AxisLineParser {
         });
       }
 
+      // 9.5. Detecta PORTAS e JANELAS (gaps curtos nas paredes)
+      const openings = this.detectOpenings(mask, W, H, filteredWalls);
+      if (openings.doors > 0) warnings.push(`${openings.doors} porta(s) detectada(s)`);
+      if (openings.windows > 0) warnings.push(`${openings.windows} janela(s) detectada(s)`);
+
       // 10. Cômodos via flood-fill (áreas vazias cercadas por paredes)
       const rooms = this.detectRooms(mask, W, H, filteredWalls, ppm, cx, cz, scale);
+
+      // 10.5. Classifica cômodos por área (heurística simples)
+      this.classifyRoomTypes(rooms);
 
       // 11. Classifica paredes externas
       this.classifyExternalWalls(walls, scale.totalWidth, scale.totalDepth);
@@ -670,6 +691,197 @@ export class AxisLineParser {
       if (w.length > maxDim * 0.65) {
         w.type = 'exterior';
         w.thickness = 0.25;
+      }
+    }
+  }
+
+  // ============================================
+  // DETECÇÃO DE CURVAS (Hough Circle simplificado)
+  // Procura segmentos CURVOS no bitmap que formam arcos
+  // (paredes arredondadas, sancas, etc)
+  // ============================================
+  private detectCurves(
+    mask: Uint8Array, W: number, H: number,
+    xStart: number, xEnd: number, yStart: number, yEnd: number,
+    minRadius: number
+  ): { center: { x: number; y: number }; radius: number; arc: number; startAngle: number; endAngle: number }[] {
+    const curves: { center: { x: number; y: number }; radius: number; arc: number; startAngle: number; endAngle: number }[] = [];
+
+    // Para cada pixel "preto" no canto (potencial ponto de curva),
+    // testa se há um arco centrado nele
+    // Estratégia simplificada: procura clusters de pixels pretos
+    // em formato circular (curva externa)
+
+    const maxRadius = Math.min(W, H) * 0.15; // raio máximo = 15% do menor lado
+    const step = Math.max(2, Math.floor(minRadius / 2));
+    const angleStep = Math.PI / 12; // 15° de precisão
+
+    for (let cy = yStart + minRadius; cy < yEnd - minRadius; cy += step * 2) {
+      for (let cx = xStart + minRadius; cx < xEnd - minRadius; cx += step * 2) {
+        // Para cada raio candidato
+        for (let r = minRadius; r <= maxRadius; r += step) {
+          // Conta quantos pixels do arco são pretos
+          let blackCount = 0;
+          let total = 0;
+          const blackAngles: number[] = [];
+          for (let theta = 0; theta < 2 * Math.PI; theta += angleStep) {
+            const px = Math.round(cx + r * Math.cos(theta));
+            const py = Math.round(cy + r * Math.sin(theta));
+            if (px < 0 || px >= W || py < 0 || py >= H) continue;
+            total++;
+            if (mask[py * W + px]) {
+              blackCount++;
+              blackAngles.push(theta);
+            }
+          }
+
+          // Se mais de 50% do círculo é preto, é um candidato a arco
+          if (total > 0 && blackCount / total >= 0.5) {
+            // Verifica se é um arco (não círculo completo) — conta range angular
+            if (blackAngles.length > 0) {
+              const minA = Math.min(...blackAngles);
+              const maxA = Math.max(...blackAngles);
+              const arc = maxA - minA;
+              if (arc > Math.PI / 3 && arc < 2 * Math.PI - 0.1) { // arco > 60° e < 360°
+                curves.push({
+                  center: { x: cx, y: cy },
+                  radius: r,
+                  arc,
+                  startAngle: minA,
+                  endAngle: maxA,
+                });
+                break; // Próximo centro
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Remove duplicatas (curvas muito próximas)
+    const filtered: typeof curves = [];
+    for (const c of curves) {
+      let dup = false;
+      for (const f of filtered) {
+        const dist = Math.sqrt((c.center.x - f.center.x) ** 2 + (c.center.y - f.center.y) ** 2);
+        if (dist < minRadius && Math.abs(c.radius - f.radius) < minRadius) {
+          dup = true;
+          break;
+        }
+      }
+      if (!dup) filtered.push(c);
+    }
+
+    return filtered;
+  }
+
+  // Aproxima uma curva por 3 segmentos retos
+  private curveToSegments(curve: { center: { x: number; y: number }; radius: number; startAngle: number; endAngle: number }): Wall2D[] {
+    const segs: Wall2D[] = [];
+    const N = 3; // número de segmentos
+    const c = curve.center;
+    const r = curve.radius;
+    const dAngle = (curve.endAngle - curve.startAngle) / N;
+
+    for (let i = 0; i < N; i++) {
+      const a1 = curve.startAngle + dAngle * i;
+      const a2 = curve.startAngle + dAngle * (i + 1);
+      const p1 = { x: c.x + r * Math.cos(a1), y: c.y + r * Math.sin(a1) };
+      const p2 = { x: c.x + r * Math.cos(a2), y: c.y + r * Math.sin(a2) };
+      segs.push({
+        start: p1,
+        end: p2,
+        orientation: Math.abs(p2.x - p1.x) > Math.abs(p2.y - p1.y) ? 'horizontal' : 'vertical',
+        length: Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2),
+        span: (p1.y + p2.y) / 2,
+      });
+    }
+    return segs;
+  }
+
+  // ============================================
+  // DETECÇÃO DE PORTAS E JANELAS
+  // Procura gaps curtos em paredes longas:
+  // - Door: gap 5-15% do comprimento
+  // - Window: gap 20-40% do comprimento (e mais alto no bitmap)
+  // ============================================
+  private detectOpenings(
+    mask: Uint8Array, W: number, H: number,
+    walls: Wall2D[]
+  ): { doors: number; windows: number } {
+    let doors = 0;
+    let windows = 0;
+
+    for (const w of walls) {
+      const isHorizontal = w.orientation === 'horizontal';
+      const length = w.length;
+      if (length < 30) continue; // parede muito curta, ignora
+
+      // Conta gaps ao longo da parede
+      let gaps: number[] = [];
+      let inGap = false;
+      let gapStart = 0;
+      const minGapSize = 3; // 3px mínimo pra considerar como abertura (não ruído)
+
+      const range = isHorizontal
+        ? { start: Math.round(w.start.x), end: Math.round(w.end.x), fixed: Math.round(w.start.y) }
+        : { start: Math.round(w.start.y), end: Math.round(w.end.y), fixed: Math.round(w.start.x) };
+
+      for (let i = range.start; i < range.end; i++) {
+        const px = isHorizontal ? i : range.fixed;
+        const py = isHorizontal ? range.fixed : i;
+        if (px < 0 || px >= W || py < 0 || py >= H) continue;
+        const isBlack = mask[py * W + px];
+        if (!isBlack) {
+          if (!inGap) { inGap = true; gapStart = i; }
+        } else {
+          if (inGap) {
+            const gapSize = i - gapStart;
+            if (gapSize >= minGapSize) gaps.push(gapSize);
+            inGap = false;
+          }
+        }
+      }
+
+      // Classifica gaps
+      for (const g of gaps) {
+        const ratio = g / length;
+        if (ratio >= 0.04 && ratio <= 0.12) {
+          // Gap 4-12% = porta (0.6m a 1.2m em parede de 6m)
+          doors++;
+        } else if (ratio >= 0.15 && ratio <= 0.40) {
+          // Gap 15-40% = janela
+          windows++;
+        }
+      }
+    }
+
+    return { doors, windows };
+  }
+
+  // ============================================
+  // CLASSIFICAÇÃO DE CÔMODOS POR ÁREA
+  // Heurística simples baseada em m²
+  // ============================================
+  private classifyRoomTypes(rooms: Room[]): void {
+    for (const r of rooms) {
+      const a = r.area;
+      // Ordem importa: banheiro < quarto < sala
+      if (a < 4) {
+        r.type = 'bathroom';
+        r.name = `WC ${r.id}`;
+      } else if (a < 8) {
+        r.type = 'bedroom';
+        r.name = `Quarto ${r.id}`;
+      } else if (a < 14) {
+        r.type = 'bedroom';
+        r.name = `Quarto ${r.id}`;
+      } else if (a < 20) {
+        r.type = 'living';
+        r.name = `Sala ${r.id}`;
+      } else {
+        r.type = 'living';
+        r.name = `Sala ${r.id}`;
       }
     }
   }

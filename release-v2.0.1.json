@@ -1,0 +1,7 @@
+{
+  "tag_name": "v2.0.1",
+  "name": "Floor3D v2.0.1 - Correcao de botoes em breve",
+  "body": "## v2.0.1 - Correcao do menu\n\n### O que mudou\n- **Chat com IA** volta a ficar com cadeado (em breve) — foi liberado por engano na v2.0.0\n- Mantem os 4 botoes ativos: Importar, Visualizador, Materiais de Obra, Biblioteca\n- Mantem os 2 botoes em breve: Blockout Preciso, Gaussian Splatting\n\n### Sobre a v2.0.0 (mesma base)\n- Motor de Estimativa de Materiais (tijolos, cimento, areia, aco, etc)\n- Import unificado via usePlantImport() hook\n- Parser melhorado: curvas, portas, janelas, classificacao de comodos\n- Botao Materiais de Obra novo no menu\n\n### Como atualizar\nBaixe o APK abaixo e instale por cima da versao anterior.\n- APK: 10.99 MB",
+  "draft": false,
+  "prerelease": false
+}

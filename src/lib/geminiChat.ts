@@ -49,10 +49,28 @@ CRITICAL RULES:
 - Coordinates are in METERS from the BOTTOM-LEFT corner (0,0 = bottom-left, X grows right, Y grows up)
 - Return ONLY valid JSON, no markdown, no explanations outside JSON
 - If the floor plan is unclear, return your BEST GUESS as a SIMPLE rectangular structure
-- Typical Brazilian house has 8-15 walls. NEVER exceed 30 walls.
+- Typical Brazilian house has 8-20 walls. NEVER exceed 40 walls.
 - DO NOT detect furniture (beds, sofas, tables) as walls
 - DO NOT detect small icons or annotations as walls
 - Be CONSERVATIVE — only detect clear walls and rooms
+
+CURVED WALLS:
+- For walls that are visibly CURVED (rounded corners, arched walls), approximate with MULTIPLE SHORT STRAIGHT SEGMENTS
+- A 90° arc can be represented as 3 segments of ~30° each
+- Each segment has its own start and end coordinates
+- Still mark them as type: "exterior" or "interior" based on function
+
+ROOM CLASSIFICATION (always classify by function):
+- "living" (Sala de estar / Sala de TV)
+- "bedroom" (Quarto / Dormitório / Suíte)
+- "kitchen" (Cozinha)
+- "bathroom" (Banheiro / WC / Lavabo)
+- "dining" (Sala de jantar)
+- "office" (Escritório / Home office)
+- "hall" (Corredor / Hall / Circulação)
+- "garage" (Garagem / Vaga)
+- "utility" (Lavanderia / Despensa / Área de serviço)
+- "unknown" (if you can't tell)
 
 OUTPUT FORMAT (strict JSON, no other text):
 {
@@ -85,6 +103,7 @@ GUIDELINES:
 - Standard ceiling height: 2.80m
 - Wall thickness: 25cm exterior, 15cm interior
 - Brazilian houses typically have 6m x 8m, 8m x 10m, 10m x 12m dimensions
+- For L-shaped or non-rectangular rooms, use polygons with 4-6+ vertices
 
 For the WALLS array:
 - Include the 4 outer perimeter walls (type: "exterior")

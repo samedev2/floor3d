@@ -11,7 +11,7 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: 5174, // Different port from web app
+    port: 5190, // Different port from web app
   },
   build: {
     outDir: 'dist',

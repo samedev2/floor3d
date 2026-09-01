@@ -1,0 +1,7 @@
+{
+  "tag_name": "v2.1.1",
+  "name": "Floor3D v2.1.1 - Modo Demo no Login",
+  "body": "## v2.1.1 - Modo Demo no Login\n\n### O que ha de novo\n- **Modo Demo**: botao 'Entrar como Demo' na tela de login\n  - Acesso direto sem precisar de Supabase funcionando\n  - Sessao local (sessionStorage), expira ao fechar o app\n  - Ideal pra testes, demos, e quando o Supabase local tiver offline\n- **Botao 'Pular e entrar como Demo'** na tela de config Supabase\n- **Tela dedicada do Demo** com limitacoes explicitas (sem nuvem, etc)\n- **Badge 'Demo'** no header do app pra lembrar que esta em demo\n- **Botao 'Sair do demo'** no header (badge laranja) pra voltar pro login\n\n### Como funciona\n1. Abre o app\n2. Tela de login aparece\n3. Toca em 'Entrar como Demo' (botao laranja embaixo do form)\n4. App entra normalmente (todas as funcoes, exceto sync na nuvem)\n5. Badge laranja 'Demo' no canto superior direito\n6. Toca no badge pra sair do demo\n\n### Casos de uso\n- **Testes offline** sem Supabase rodando\n- **Demonstrações** pra mostrar a interface\n- **Desenvolvimento** sem precisar configurar auth\n- **Troubleshooting** quando o servidor Supabase ta com problema\n\n### Limitacoes do demo (claras na UI)\n- Nao sincroniza plantas com a nuvem\n- Sessao local, some ao fechar o app\n- Recursos de IA (Gemini) continuam funcionando normalmente\n\n### Detalhes tecnicos\n- APK: 10.99 MB\n- Funciona em web (browser) e Android (APK)\n- sessionStorage: demo expira ao fechar aba/app\n- localStorage: config Supabase persistente",
+  "draft": false,
+  "prerelease": false
+}
